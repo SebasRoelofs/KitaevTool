@@ -75,7 +75,7 @@ class FermionSystem:
         '''
         Applies an operator to a list of states, to generate the new states
         A destructed state is shown as -1, to distuinguish it from the empty state (0)
-        (An alternative option is to shift each state up by 1)
+        (Alternative option is to shift each state up by 1)
 
         Args:
             oper (int): integer representing an operator
@@ -133,20 +133,25 @@ class FermionSystem:
     def normal_order(self,oper_list: list):
         ''' 
         Place sequence of operators in normal order, tracking the sign
-        Here normal order = sorting the list of integers from smallest to largest
-        Currently doing a naive bubble sort, does the trick
-        Note: for now, this ignores whether any same-site operators are present
+        Normal order = sorting the list of integers from smallest to largest
+        Sorting done with a bubble sort. 
+        To do: handle the presence of same-site operators (for now ignored)
         Args:
             oper_list (list)
         '''
         ferm_sign=1
         for i in range(len(oper_list)-1):
+            flag_swap = False
             for j in range(len(oper_list)-1):
                 if oper_list[j] > oper_list[j+1]:
+                    flag_swap=True
                     temp = oper_list[j+1]
                     oper_list[j+1] = oper_list[j] 
                     oper_list[j] = temp
                     ferm_sign*= -1
+            ## if no swap took place, list is sorted
+            if not flag_swap:
+                return oper_list,ferm_sign
         return oper_list,ferm_sign
 
     def state_to_oper_list(self,state:int):

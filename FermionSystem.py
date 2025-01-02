@@ -149,6 +149,42 @@ class FermionSystem:
                     ferm_sign*= -1
         return oper_list,ferm_sign
 
+    def state_to_oper_list(self,state:int):
+        '''
+        Convert from a state to the list of creation operators 
+        to create the state from vaccuum.
+        '''
+        oper_list = []
+        pos = 0
+        while state:
+            if (state & 0B1):
+                oper = self.construct_operator(int(np.floor(pos/2)), pos%2, creation=True)
+                oper_list.append(oper)
+            state = state >> 1
+            pos += 1
+        return oper_list
+
+
+    def state_to_state(self, state_1:int, state_2: int):
+        '''
+        Given 2 states, returns the sequence of operators
+        to go from state_1 to state_2 (in normal order).
+        '''
+        state_diff = state_1^state_2
+        pos = 0
+        oper_list = []
+        while state_diff:
+            if (state_diff & 0B1):
+                creation = state_2 & 0B1
+                oper = self.construct_operator(int(np.floor(pos/2)), pos%2, creation=creation)
+                oper_list.append(oper)
+            state_diff = state_diff >> 1
+            state_1 = state_1 >> 1
+            state_2 = state_2 >> 1
+            pos+= 1
+        normal_ordered, sign = self.normal_order(oper_list)
+        return normal_ordered,sign
+
 
     def vis_oper(self,oper):
         '''

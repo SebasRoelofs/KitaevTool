@@ -2,6 +2,7 @@ import FermionSystem as fst
 import numpy as np
 from functools import partial
 from tqdm import tqdm
+import proplot as pplt
 
 
 def get_chain_terms(fs,dist,types, spins):
@@ -134,7 +135,7 @@ def energy_spectrum(chain, params, param_range, site, fig, ax, plot=True):
 	for v_idx in tqdm(np.arange(len(param_range))):
 		chain.update_H_param_list(params, param_range[v_idx], update_matrix=True) 
 
-		energies,weights = chain.transitions_sorted(site)
+		energies,weights = chain.lowest_transitions_sorted(site)
 		all_energies.extend(energies)
 		all_weights.extend(weights)
 		all_xvars.extend(np.full(len(weights), param_range[v_idx]))
@@ -158,3 +159,25 @@ def make_kitaev_chain(N,H_params, Ez_inf = True, U_inf = True, make_arrays=False
         chain.H_to_array('odd')
         chain.H_to_array('even')
     return chain
+
+def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], lead_params = {},plot=True):
+    Gs = [[] for i in range(len(sites))]
+    
+    for v_idx in tqdm(np.arange(len(param_range))):
+        chain.update_H_param_list(params, param_range[v_idx], update_matrix=True) 
+
+
+        G_matrix = chain.rate_equation(sites,bias_range,lead_params)
+
+        for i in range(len(sites)):
+            Gs[i].append(G_matrix[i][i])
+    if plot:
+        ## Create Figure
+        fig, axs = pplt.subplots(np.arange(len(sites))+1, figwidth = len(sites)*2.5, figheight = 2.2, grid='off')
+        fig.format(xlabel = '$\delta \mu$', ) #xlocator=0.1,xminorlocator=0.05, ylocator=0.1,yminorlocator=0.05)
+        fig.format(ylabel = '$V_{\mathrm{bias}}$')
+        for i in range(len(sites)):
+            im = axs[i].pcolormesh(param_range,bias_range,np.transpose(Gs[i]))
+            cbar = fig.colorbar(im,ax = axs[i], width = 0.05)
+    else:
+        return Gs

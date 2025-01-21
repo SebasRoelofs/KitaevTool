@@ -1,4 +1,6 @@
 from scipy.sparse.linalg import LinearOperator, eigsh
+from scipy.linalg import block_diag
+
 from typing import Callable
 from functools import partial
 from IPython.display import display, Math,Markdown
@@ -22,6 +24,46 @@ def hamming_weight(states: np.ndarray):
     count = states - ((states >> 1) & 0o33333333333) - ((states >> 2) & 0o11111111111)
     return ((count + (count >> 3)) & 0o30707070707) % 63
 
+############################################################################################
+#### Code snippets from Chun-Xiao for generating current from a Transition rate matrix
+#### by solving rate equation
+def n_F(E, mu, kBT):
+    energy = (E - mu) / kBT
+    n = (np.exp(energy) + 1)**-1
+    return n
+
+def get_P(rate_total, N_state):
+    rate_matrix = np.zeros((N_state+1, N_state))
+    rate_matrix[0:N_state, 0:N_state] = rate_total
+    for k in range(N_state):
+        rate_matrix[k, k] = -np.sum(rate_total[:, k])
+    rate_matrix[N_state, :] = np.ones(N_state)
+    
+    right_vec = np.zeros((N_state+1, 1))
+    right_vec[N_state, 0] = 1
+    P_vec = np.linalg.pinv(rate_matrix) @ right_vec
+    return P_vec
+
+def get_current(rate_plus_list, rate_minus_list, P_vec, num_of_leads):
+    Is = np.zeros(num_of_leads)
+    for j in range(num_of_leads):
+        Is[j] = np.sum((rate_plus_list[j] - rate_minus_list[j]) @ P_vec)
+    return Is
+
+def get_Is(num_of_leads, Tsq_plus_list, Tsq_minus_list, gammas, mus, Es_ba, kBT):
+    rate_plus_list = []
+    rate_minus_list = []
+    rate_total = 0
+    for k in range(num_of_leads):
+        rate_plus = gammas[k] * Tsq_plus_list[k] * n_F(Es_ba, mus[k], kBT)
+        rate_minus = gammas[k] * Tsq_minus_list[k] * (np.ones(np.shape(Es_ba)) - n_F(-Es_ba, mus[k], kBT))
+        rate_plus_list.append(rate_plus)
+        rate_minus_list.append(rate_minus)
+        rate_total += rate_plus + rate_minus
+    P_vec = get_P(rate_total=rate_total, N_state=np.shape(Es_ba)[0])
+    Is = get_current(rate_plus_list, rate_minus_list, P_vec, num_of_leads)
+    return Is
+########################################################################################
 
 class FermionSystem:
     def __init__(self, N):
@@ -286,7 +328,7 @@ class FermionSystem:
             for w,s in zip(weights,states):
                 w = np.round(w,3)
                 if w !=0:
-                    str += f'{"+" if w>0 else ""}{w}'+self.vis_state(s, displ=False)
+                    str += f'{"+" if w>0 else ""}{w.real if w.imag==0 else w}'+self.vis_state(s, displ=False)
         else:
             for state in states:
                 str += self.vis_state(state, displ=False) + ' '
@@ -325,7 +367,8 @@ class ParitySystem(FermionSystem):
             U_inf (bool): whether to restrict the subspaces to infinute U
         '''
         super().__init__(N)
-        self.odd_states,self.even_states = self.sort_odd_even_states(Ez_inf = Ez_inf, U_inf=U_inf)
+        self.odd_states,self.even_states = self.restrict_and_sort_fockspace(Ez_inf = Ez_inf, U_inf=U_inf)
+        self.fock_states = np.append(self.even_states,self.odd_states)
         self.odd_states_hash = {num:idx for idx,num in enumerate(self.odd_states)}
         self.even_states_hash = {num:idx for idx,num in enumerate(self.even_states)}
 
@@ -342,7 +385,7 @@ class ParitySystem(FermionSystem):
         self.even_terms = self.act_H_on_subspace(self.even_states,self.even_states_hash)
         self.even_vals = np.array([self.H_vals[type]*parity for type,parity in zip(self.even_terms[3], self.even_terms[2])])
 
-    def sort_odd_even_states(self,Ez_inf: bool, U_inf: bool):
+    def restrict_and_sort_fockspace(self,Ez_inf: bool, U_inf: bool):
         '''
         Sorts Fock states into 'even' and 'odd' parities (determined by count of 1's in binary)
         Optionally allows restricting the Fock space to infinite U or infinite Ez 
@@ -422,11 +465,11 @@ class ParitySystem(FermionSystem):
             pos_data = self.even_terms
             val_data = self.even_vals
         
-        arr = np.zeros((len(states),len(states)))
+        arr = np.zeros((len(states),len(states)),dtype=complex)
         idx=0
         for row,col,par in zip(pos_data[0],pos_data[1],pos_data[2]):
             arr[row,col] += par*val_data[idx]
-            arr[col,row] += par*val_data[idx]
+            arr[col,row] += np.conj(par*val_data[idx])
             idx+=1
 
         if parity == 'odd':
@@ -476,14 +519,11 @@ class ParitySystem(FermionSystem):
             ## If required, update the matrix forms
             if update_matrix:
                 H=Hs[i]
-                rows = terms[0][type_match]
-                cols = terms[1][type_match]
-                pars = terms[2][type_match]
-                for r,c,p in zip(rows,cols,pars):
+                for r,c,p in zip(terms[0][type_match],terms[1][type_match],terms[2][type_match]):
                     H[r,c] -= old_val*p
                     H[r,c] += new_val*p
-                    H[c,r] -= old_val*p
-                    H[c,r] += new_val*p
+                    H[c,r] -= np.conj(old_val*p)
+                    H[c,r] += np.conj(new_val*p)
             i+=1
 
     def update_H_param_list(self, types: list[str], new_val: float, update_matrix=False):
@@ -519,7 +559,6 @@ class ParitySystem(FermionSystem):
         if update_matrix:
             Hs = [self.H_even, self.H_odd]
 
-        
         ## Update the lists tracking the non-zero terms for the even and odd sectors
         i=0
         for terms, values in zip([self.even_terms, self.odd_terms], [self.even_vals, self.odd_vals]):
@@ -531,14 +570,11 @@ class ParitySystem(FermionSystem):
             ## If required, update the matrix forms
             if update_matrix:
                 H=Hs[i]
-                rows = terms[0][type_match]
-                cols = terms[1][type_match]
-                pars = terms[2][type_match]
-                for r,c,p in zip(rows,cols,pars):
+                for r,c,p in zip(terms[0][type_match],terms[1][type_match],terms[2][type_match]):
                     H[r,c] -= old_val*p
                     H[r,c] += new_val*p
-                    H[c,r] -= old_val*p
-                    H[c,r] += new_val*p
+                    H[c,r] -= np.conj(old_val*p)
+                    H[c,r] += np.conj(new_val*p)
             i+=1
     
     def solve_system(self, method='linalg', n_values=None,):
@@ -588,7 +624,7 @@ class ParitySystem(FermionSystem):
         E_phi_even = np.round(E_phi_even,10)  ## Truncate numerical errors
 
         ## obtain the ground states of the system (allow degeneracy within some treshhold)
-        return E_odd.real,E_even.real, E_phi_odd,  E_phi_even
+        return E_odd.real,E_even.real, E_phi_odd, E_phi_even
 
     def solve_sparse(self, n_values):
         '''
@@ -610,7 +646,7 @@ class ParitySystem(FermionSystem):
     @staticmethod
     def sel_ground_states(E_odd: list, E_even: list, threshold: float  = 1):
         ''' 
-        Determine the idx of the lowest ground state, between the odd and even sctor
+        Determine the idx of the lowest ground state, between the odd and even sector
         Selects multiple in case of degeneracies, within the given threshhold
         Args:
             E_odd (list): odd eigenvalues
@@ -639,7 +675,6 @@ class ParitySystem(FermionSystem):
     def eigenstates(self, only_ground_states=False, only_energies = False):
         '''
         Calculate and display the eigenstates of the system, sorted by energy
-        
 
         '''
         E_odd,E_even,E_phi_odd, E_phi_even = self.solve_system(method='linalg')
@@ -677,10 +712,12 @@ class ParitySystem(FermionSystem):
                     print(f"{label:<20} E = {np.round(state[0],2):<10.2f} \u007C\u03C6\u3009= {self.vis_state_list(states_list[state[3]],  state[1])}")
 
 
-    def transitions_sorted(self,site: int, method: str='linalg',n_values: int = 1, threshold: float = 1):
+    def lowest_transitions_sorted(self,site: int, method: str='linalg',n_values: int = 1, threshold: float = 1):
         ''' 
         Set-up for calculating possible single-electron transitions between odd/even ground states and the excited states
         for adding holes/electrons to a given site
+        Included for speed compared to solving the entire rate equation
+
         Args:
             site: the fermionic site to calculate transitions for
             method: method to use for solving the hamiltonian
@@ -692,20 +729,21 @@ class ParitySystem(FermionSystem):
         T_all = []
         weights_all = []
         for idx in odd_gs_idx:
-            T_odd_to_even, weights = self.transitions(E_odd[idx],phi_odd[idx], self.odd_states, E_even, phi_even, self.even_states, site)
+            T_odd_to_even, weights = self.lowest_transitions(E_odd[idx],phi_odd[idx], self.odd_states, E_even, phi_even, self.even_states, site)
             T_all.extend(T_odd_to_even)
             weights_all.extend(weights)
             
         for idx in even_gs_idx:
-            T_even_to_odd, weights = self.transitions(E_even[idx],phi_even[idx], self.even_states, E_odd, phi_odd, self.odd_states, site)
+            T_even_to_odd, weights = self.lowest_transitions(E_even[idx],phi_even[idx], self.even_states, E_odd, phi_odd, self.odd_states, site)
             T_all.extend(T_even_to_odd)
             weights_all.extend(weights)
         return T_all,weights_all
 
     
-    def transitions(self, E_gs, phi_gs, gs_states, E_excited, phi_excited, excited_states, site):
+    def lowest_transitions(self, E_gs, phi_gs, gs_states, E_excited, phi_excited, excited_states, site):
         '''
-        Calculate single-electron transitions at a given site, from the ground state to the excited states
+        Calculate single-electron transitions at a given site, from the ground states to the excited states
+        Included for speed compared to solving the entire rate equation
         Args:
             E_gs (float): energy of the ground state
             phi_gs (1Darray): weights of the ground state Fock basis
@@ -747,7 +785,6 @@ class ParitySystem(FermionSystem):
         '''
         Show the filled Hamiltonian matrix
         '''
-            
         if parity=='odd':
             if not hasattr(self, 'H_odd'):
                 self.H_to_array('odd')
@@ -825,4 +862,64 @@ class ParitySystem(FermionSystem):
     
         ax.axis('off')
 
-   
+
+    def transition_matrix(self, phi, operators):
+        T_ij = np.zeros((len(phi[:,0]),len(phi[:,0])), dtype=complex)
+        zero_col = np.zeros(len(phi[:,0]), dtype=complex)
+        for oper in operators:
+            trans_array = []
+            new_states,signs = self.act_oper(oper, self.fock_states)
+            trans_array = [np.conj(phi[:,np.where(new_states == self.fock_states[i])[0]].T[0])*signs[i] if (self.fock_states[i] in new_states) else zero_col for i in range(len(self.fock_states))]
+            T_ij += phi @ trans_array
+        return T_ij
+
+    def rate_equation(self, sites,bias_range, lead_params, truncate_lim = 20, method = 'linalg', n_values = 1):
+        ## Solve for energies and wavefunctions
+        E_odd, E_even, phi_odd, phi_even = self.solve_system(method='linalg', n_values=n_values)
+
+        
+        ## Merge the odd and even sections into a block diagonal matrix with only the lowest eigenvectors and eigenvalues
+        E_even_trunc, E_odd_trunc = self.N_lowest_states(E_even,E_odd, truncate_lim=truncate_lim)
+        E = np.append(E_even[:E_even_trunc], E_odd[:E_odd_trunc])
+        phi = block_diag(phi_even[:E_even_trunc], phi_odd[:E_odd_trunc])
+
+        G_matrix = np.zeros((len(sites), len(sites), len(bias_range)))
+
+        Es_i, Es_j = np.meshgrid(E, E)
+        Es_ij = Es_j - Es_i
+        Tsq_plus_list = []
+        Tsq_minus_list = []
+        
+        ## For each desired site, get transition rate matrix
+        for site in sites:
+            operators = [self.operator('creation',site,'up'), self.operator('creation',site,'down')] ## Create spin-up and spin-down
+            Tsq_plus = np.abs(self.transition_matrix(phi, operators))**2 
+            Tsq_minus = Tsq_plus.T 
+            Tsq_plus_list.append(Tsq_plus)
+            Tsq_minus_list.append(Tsq_minus)
+
+        ## Generate currents from transition rate matrix
+        for j in range(len(sites)):
+            for i, Vbias in enumerate(bias_range):
+                mus = np.zeros(len(sites))
+                mus[j] = Vbias
+                Is0 = get_Is(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Es_ij, lead_params['kBT'])
+
+                mus = np.zeros(len(sites))
+                mus[j] = Vbias + lead_params['dV']
+                Is1 = get_Is(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Es_ij, lead_params['kBT'])
+
+                gs = 2 * np.pi * (Is1 - Is0) / lead_params['dV']
+                G_matrix[:, j, i] = gs
+                
+        return G_matrix
+
+    @staticmethod
+    def N_lowest_states(E_even,E_odd, truncate_lim):
+        sorted_E = np.sort(np.append(E_odd,E_even))
+        trunc = min([truncate_lim, len(E_odd)+len(E_even)])
+        lowest_E_vals = (sorted_E[:trunc])[::-1]
+
+        E_odd_trunc = np.where(E_odd == lowest_E_vals[np.argmax(np.isin(lowest_E_vals,E_odd))])[0][-1]+1
+        E_even_trunc =  np.where(E_even == lowest_E_vals[np.argmax(np.isin(lowest_E_vals,E_even))])[0][-1]+1
+        return E_even_trunc, E_odd_trunc

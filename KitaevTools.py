@@ -160,14 +160,14 @@ def make_kitaev_chain(N,H_params, Ez_inf = True, U_inf = True, make_arrays=False
         chain.H_to_array('even')
     return chain
 
-def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], lead_params = {},plot=True):
+def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], lead_params = {},plot=True, method='linalg', n_values=1):
     Gs = [[] for i in range(len(sites))]
     
     for v_idx in tqdm(np.arange(len(param_range))):
         chain.update_H_param_list(params, param_range[v_idx], update_matrix=True) 
 
 
-        G_matrix = chain.rate_equation(sites,bias_range,lead_params)
+        G_matrix = chain.rate_equation(sites,bias_range,lead_params, method=method, truncate_lim=n_values)
 
         for i in range(len(sites)):
             Gs[i].append(G_matrix[i][i])
@@ -181,3 +181,27 @@ def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], l
             cbar = fig.colorbar(im,ax = axs[i], width = 0.05)
     else:
         return Gs
+
+def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals, sites = [0,1], lead_params={}, method='linalg', n_values=5):
+    Gs = [[] for i in range(len(sites)**2)]
+    shape = (len(y_vals), len(x_vals))
+    for y_val in tqdm(y_vals):
+    
+        chain.update_H_param_list(vary_params_y, y_val, update_matrix=True)
+
+        for x_val in x_vals:
+            chain.update_H_param_list(vary_params_x, x_val,update_matrix=True)
+
+            G_matrix = chain.rate_equation(sites,[0],lead_params, method=method, truncate_lim=n_values)
+
+            for i,g in enumerate(G_matrix.flatten()):
+                Gs[i].append(g)
+
+
+            
+    reshaped_Gs = []
+    for g in Gs:
+        reshaped_Gs.append(np.reshape(g,shape))
+    return reshaped_Gs
+
+

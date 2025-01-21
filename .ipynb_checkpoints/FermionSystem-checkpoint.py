@@ -379,11 +379,11 @@ class ParitySystem(FermionSystem):
 
         ## Gather Odd Hamiltonian
         self.odd_terms = self.act_H_on_subspace(self.odd_states,self.odd_states_hash)
-        self.odd_vals = np.array([self.H_vals[type] for type in self.odd_terms[3]])
+        self.odd_vals = np.array([self.H_vals[type]*parity for type, parity in zip(self.odd_terms[3], self.odd_terms[2])])
 
         ## Gather Even Hamiltonian
         self.even_terms = self.act_H_on_subspace(self.even_states,self.even_states_hash)
-        self.even_vals = np.array([self.H_vals[type] for type in self.even_terms[3]])
+        self.even_vals = np.array([self.H_vals[type]*parity for type,parity in zip(self.even_terms[3], self.even_terms[2])])
 
     def restrict_and_sort_fockspace(self,Ez_inf: bool, U_inf: bool):
         '''
@@ -605,9 +605,8 @@ class ParitySystem(FermionSystem):
             E_odd,E_even,E_phi_odd,E_phi_even = self.solve_linalg()
 
         elif method == 'sparse':
-            ## If no n_values is provided, get the maximum allowed number
             if n_values is None:
-                n_values = max([len(self.odd_states-1), len(self.even_states-1)])
+                raise ValueError("Method sparse requires specifying 'n_values'")
             E_odd,E_even,E_phi_odd,E_phi_even = self.solve_sparse(n_values)
 
         return E_odd,E_even,E_phi_odd,E_phi_even
@@ -633,20 +632,16 @@ class ParitySystem(FermionSystem):
         '''
         ## Construct LinearOperator for odd parity sector
         M_odd = LinearOperator((len(self.odd_states), len(self.odd_states)), 
-                               matvec=partial(self.sparse_function, rows=self.odd_terms[0], cols=self.odd_terms[1],vals=self.odd_vals*self.odd_terms[2]))
+                               matvec=partial(self.sparse_function, rows=self.odd_terms[0], cols=self.odd_terms[1],vals=self.odd_vals))
 
         ## Construct LinearOperator for even parity sector
         M_even = LinearOperator((len(self.even_states), len(self.even_states)), 
-                            matvec=partial(self.sparse_function, rows=self.even_terms[0], cols=self.even_terms[1],vals=self.even_vals*self.even_terms[2]))
-
-        ## n_values cannot be larger than dimension if system -1
-        n_values_odd = min([n_values, len(self.odd_states)-1])
-        n_values_even = min([n_values, len(self.even_states)-1])
+                            matvec=partial(self.sparse_function, rows=self.even_terms[0], cols=self.even_terms[1],vals=self.even_vals))
 
         ## Obtain n lowest eigenvalues and eigenvectors (up to n_values)
-        E_odd, phi_odd = eigsh(M_odd, k=n_values_odd, which='SA')
-        E_even, phi_even = eigsh(M_even, k=n_values_even, which='SA')
-        return E_odd,E_even, np.transpose(phi_odd),np.transpose(phi_even)
+        E_odd, phi_odd = eigsh(M_odd, k=n_values, which='SA')
+        E_even, phi_even = eigsh(M_even, k=n_values, which='SA')
+        return E_odd,E_even, phi_odd,phi_even
 
     @staticmethod
     def sel_ground_states(E_odd: list, E_even: list, threshold: float  = 1):
@@ -786,7 +781,7 @@ class ParitySystem(FermionSystem):
             weights.extend([p for p in total if p!=0])
         return energies,weights
 
-    def show_hamiltonian_numeric(self, parity, width):
+    def show_hamiltonian_ints(self, parity, width):
         '''
         Show the filled Hamiltonian matrix
         '''
@@ -830,7 +825,7 @@ class ParitySystem(FermionSystem):
             strs+= self.vis_state(state) + ', '
         print(f'Basis: {strs[:-2]}')
         if numeric:
-            self.show_hamiltonian_numeric(parity, len(states))
+            self.show_hamiltonian_ints(parity, len(states))
             return
         width = len(states)
         fig,ax = plt.subplots(1,figsize =(width/1.2,width/1.2))
@@ -867,6 +862,7 @@ class ParitySystem(FermionSystem):
     
         ax.axis('off')
 
+
     def transition_matrix(self, phi, operators):
         T_ij = np.zeros((len(phi[:,0]),len(phi[:,0])), dtype=complex)
         zero_col = np.zeros(len(phi[:,0]), dtype=complex)
@@ -877,10 +873,11 @@ class ParitySystem(FermionSystem):
             T_ij += phi @ trans_array
         return T_ij
 
-    def rate_equation(self, sites,bias_range, lead_params, truncate_lim = 20, method = 'linalg'):
+    def rate_equation(self, sites,bias_range, lead_params, truncate_lim = 20, method = 'linalg', n_values = 1):
         ## Solve for energies and wavefunctions
-        E_odd, E_even, phi_odd, phi_even = self.solve_system(method=method, n_values=truncate_lim)
+        E_odd, E_even, phi_odd, phi_even = self.solve_system(method='linalg', n_values=n_values)
 
+        
         ## Merge the odd and even sections into a block diagonal matrix with only the lowest eigenvectors and eigenvalues
         E_even_trunc, E_odd_trunc = self.N_lowest_states(E_even,E_odd, truncate_lim=truncate_lim)
         E = np.append(E_even[:E_even_trunc], E_odd[:E_odd_trunc])
@@ -890,7 +887,9 @@ class ParitySystem(FermionSystem):
 
         Es_i, Es_j = np.meshgrid(E, E)
         Es_ij = Es_j - Es_i
-        Tsq_plus_list, Tsq_minus_list = [], []
+        Tsq_plus_list = []
+        Tsq_minus_list = []
+        
         ## For each desired site, get transition rate matrix
         for site in sites:
             operators = [self.operator('creation',site,'up'), self.operator('creation',site,'down')] ## Create spin-up and spin-down
@@ -903,14 +902,14 @@ class ParitySystem(FermionSystem):
         for j in range(len(sites)):
             for i, Vbias in enumerate(bias_range):
                 mus = np.zeros(len(sites))
-                mus[j] = Vbias - lead_params['dV']
+                mus[j] = Vbias
                 Is0 = get_Is(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Es_ij, lead_params['kBT'])
 
                 mus = np.zeros(len(sites))
                 mus[j] = Vbias + lead_params['dV']
                 Is1 = get_Is(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Es_ij, lead_params['kBT'])
 
-                gs = 2 * np.pi * (Is1 - Is0) / (2*lead_params['dV'])
+                gs = 2 * np.pi * (Is1 - Is0) / lead_params['dV']
                 G_matrix[:, j, i] = gs
                 
         return G_matrix

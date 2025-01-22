@@ -33,29 +33,19 @@ def n_F(E, mu, kBT):
     n = (np.exp(energy) + 1)**-1
     return n
 
-## Old code, slightly slower than the function below (and did not normalize P)
-def get_P(rate_total, N_state):
-    rate_matrix = np.zeros((N_state+1, N_state))
-    rate_matrix[0:N_state, 0:N_state] = rate_total
-    for k in range(N_state):
-        rate_matrix[k, k] = -np.sum(rate_total[:, k])
-    rate_matrix[N_state, :] = np.ones(N_state)
-    
-    right_vec = np.zeros((N_state+1, 1))
-    right_vec[N_state, 0] = 1
+
+def get_P_vectorized(rate_total):
+    N_states = np.shape(rate_total)[0]
+
+    rate_matrix = np.zeros((N_states+1, N_states))
+    rate_matrix[0:N_states,0:N_states] = rate_total
+    np.fill_diagonal(rate_matrix, -np.sum(rate_total, axis=0)) 
+    rate_matrix[N_states,:] = np.ones(N_states)
+
+    right_vec = np.zeros((N_states+1,1))
+    right_vec[N_states,0] = 1
     P_vec = np.linalg.pinv(rate_matrix) @ right_vec
     return P_vec
-
-
-## Upon testing, using scipy's null space function appears to be slightly faster than the method above
-## (difference is not huge since the rate matrices are restricted in any size)
-def get_P_vectorized(rate_total):
-    rates_summed = np.zeros(np.shape(rate_total))
-    np.fill_diagonal(rates_summed, np.sum(rate_total, axis=0)) 
-    T_matrix = rate_total - rates_summed
-    P_vec = null_space(T_matrix)
-    return abs(P_vec)
-
 
 def get_current(rate_plus_list, rate_minus_list, P_vec, num_of_leads):
     Is = np.zeros(num_of_leads)
@@ -74,7 +64,9 @@ def get_Is(num_of_leads, Tsq_plus_list, Tsq_minus_list, gammas, mus, Es_ba, kBT)
         rate_minus_list.append(rate_minus)
         rate_total += rate_plus + rate_minus
    
+    
     P_vec = get_P_vectorized(rate_total = rate_total)
+    #P_vec = get_P(rate_total=rate_total, N_state = np.shape(rate_total)[0])
 
     Is = get_current(rate_plus_list, rate_minus_list, P_vec, num_of_leads)
     return Is

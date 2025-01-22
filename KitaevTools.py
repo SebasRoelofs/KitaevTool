@@ -196,9 +196,7 @@ def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals
 
             for i,g in enumerate(G_matrix.flatten()):
                 Gs[i].append(g)
-
-
-            
+   
     reshaped_Gs = []
     for g in Gs:
         reshaped_Gs.append(np.reshape(g,shape))

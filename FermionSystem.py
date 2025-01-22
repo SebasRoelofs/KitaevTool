@@ -1,5 +1,5 @@
 from scipy.sparse.linalg import LinearOperator, eigsh
-from scipy.linalg import block_diag
+from scipy.linalg import block_diag, null_space
 
 from typing import Callable
 from functools import partial
@@ -8,6 +8,7 @@ from IPython.display import display, Math,Markdown
 import numpy as np
 import matplotlib.pyplot as plt
 
+import time
 
 def hamming_weight(states: np.ndarray):
     '''
@@ -25,13 +26,14 @@ def hamming_weight(states: np.ndarray):
     return ((count + (count >> 3)) & 0o30707070707) % 63
 
 ############################################################################################
-#### Code snippets from Chun-Xiao for generating current from a Transition rate matrix
+#### Adapted code snippets from Chun-Xiao for generating current from a Transition rate matrix
 #### by solving rate equation
 def n_F(E, mu, kBT):
     energy = (E - mu) / kBT
     n = (np.exp(energy) + 1)**-1
     return n
 
+## Old code, slightly slower than the function below (and did not normalize P)
 def get_P(rate_total, N_state):
     rate_matrix = np.zeros((N_state+1, N_state))
     rate_matrix[0:N_state, 0:N_state] = rate_total
@@ -43,6 +45,17 @@ def get_P(rate_total, N_state):
     right_vec[N_state, 0] = 1
     P_vec = np.linalg.pinv(rate_matrix) @ right_vec
     return P_vec
+
+
+## Upon testing, using scipy's null space function appears to be slightly faster than the method above
+## (difference is not huge since the rate matrices are restricted in any size)
+def get_P_vectorized(rate_total):
+    rates_summed = np.zeros(np.shape(rate_total))
+    np.fill_diagonal(rates_summed, np.sum(rate_total, axis=0)) 
+    T_matrix = rate_total - rates_summed
+    P_vec = null_space(T_matrix)
+    return abs(P_vec)
+
 
 def get_current(rate_plus_list, rate_minus_list, P_vec, num_of_leads):
     Is = np.zeros(num_of_leads)
@@ -60,7 +73,9 @@ def get_Is(num_of_leads, Tsq_plus_list, Tsq_minus_list, gammas, mus, Es_ba, kBT)
         rate_plus_list.append(rate_plus)
         rate_minus_list.append(rate_minus)
         rate_total += rate_plus + rate_minus
-    P_vec = get_P(rate_total=rate_total, N_state=np.shape(Es_ba)[0])
+   
+    P_vec = get_P_vectorized(rate_total = rate_total)
+
     Is = get_current(rate_plus_list, rate_minus_list, P_vec, num_of_leads)
     return Is
 ########################################################################################

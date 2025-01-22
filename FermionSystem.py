@@ -33,7 +33,19 @@ def n_F(E, mu, kBT):
     n = (np.exp(energy) + 1)**-1
     return n
 
+def get_P_old(rate_total, N_state):
+    rate_matrix = np.zeros((N_state+1, N_state))
+    rate_matrix[0:N_state, 0:N_state] = rate_total
+    for k in range(N_state):
+        rate_matrix[k, k] = -np.sum(rate_total[:, k])
+    rate_matrix[N_state, :] = np.ones(N_state)
+    
+    right_vec = np.zeros((N_state+1, 1))
+    right_vec[N_state, 0] = 1
+    P_vec = np.linalg.pinv(rate_matrix) @ right_vec
+    return P_vec
 
+## Minor speedup compared to above code
 def get_P_vectorized(rate_total):
     N_states = np.shape(rate_total)[0]
 
@@ -64,9 +76,25 @@ def get_Is(num_of_leads, Tsq_plus_list, Tsq_minus_list, gammas, mus, Es_ba, kBT)
         rate_minus_list.append(rate_minus)
         rate_total += rate_plus + rate_minus
    
-    
-    P_vec = get_P_vectorized(rate_total = rate_total)
+    P_vec = get_P_old(rate_total = rate_total, N_state=np.shape(rate_total)[0])
     #P_vec = get_P(rate_total=rate_total, N_state = np.shape(rate_total)[0])
+
+    Is = get_current(rate_plus_list, rate_minus_list, P_vec, num_of_leads)
+    return Is
+
+### n_F(mu=0) is calculated a redundant amount of times above
+### Below gives a (very minimal) speed-up when number of leads gets larger
+### By calculated the Nf terms only once and passing them to get_Is
+def get_Is_vectorized(num_of_leads, Tsq_plus_list, Tsq_minus_list, gammas, mus, Nf_0_plus,Nf_0_min,Nf_mu_plus,Nf_mu_min):
+    nF_plus_array = np.array([Nf_mu_plus*gammas[i] if mus[i] != 0 else Nf_0_plus*gammas[i] for i in range(len(mus))])
+    nF_min_array = np.array([Nf_mu_min*gammas[i] if mus[i] != 0 else Nf_0_min*gammas[i] for i in range(len(mus))])
+
+    rate_plus_list = Tsq_plus_list * nF_plus_array
+    rate_minus_list = Tsq_minus_list * nF_min_array
+
+    rate_total = np.sum(rate_plus_list,axis=0)+ np.sum(rate_minus_list,axis=0)
+
+    P_vec = get_P_vectorized(rate_total = rate_total)
 
     Is = get_current(rate_plus_list, rate_minus_list, P_vec, num_of_leads)
     return Is
@@ -884,7 +912,8 @@ class ParitySystem(FermionSystem):
             T_ij += phi @ trans_array
         return T_ij
 
-    def rate_equation(self, sites,bias_range, lead_params, truncate_lim = 20, method = 'linalg'):
+    ### Old version, slightly faster implementation added below
+    def rate_equation_old(self, sites,bias_range, lead_params, truncate_lim = 20, method = 'linalg'):
         ## Solve for energies and wavefunctions
         E_odd, E_even, phi_odd, phi_even = self.solve_system(method=method, n_values=truncate_lim)
 
@@ -895,8 +924,8 @@ class ParitySystem(FermionSystem):
 
         G_matrix = np.zeros((len(sites), len(sites), len(bias_range)))
 
-        Es_i, Es_j = np.meshgrid(E, E)
-        Es_ij = Es_j - Es_i
+        Es_a, Es_b = np.meshgrid(E, E)
+        Es_ba = Es_b - Es_a
         Tsq_plus_list, Tsq_minus_list = [], []
         ## For each desired site, get transition rate matrix
         for site in sites:
@@ -911,15 +940,68 @@ class ParitySystem(FermionSystem):
             for i, Vbias in enumerate(bias_range):
                 mus = np.zeros(len(sites))
                 mus[j] = Vbias - lead_params['dV']
-                Is0 = get_Is(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Es_ij, lead_params['kBT'])
-
+                Is0 = get_Is(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Es_ba, lead_params['kBT'])
+               
                 mus = np.zeros(len(sites))
                 mus[j] = Vbias + lead_params['dV']
-                Is1 = get_Is(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Es_ij, lead_params['kBT'])
-
+                Is1 = get_Is(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Es_ba, lead_params['kBT'])
+                
                 gs = 2 * np.pi * (Is1 - Is0) / (2*lead_params['dV'])
                 G_matrix[:, j, i] = gs
                 
+        return G_matrix
+
+    def rate_equation(self, sites,bias_range, lead_params, truncate_lim = 100, method = 'linalg'):
+        ## Solve for energies and wavefunctions
+        E_odd, E_even, phi_odd, phi_even = self.solve_system(method=method, n_values=truncate_lim)
+
+        ## Merge the odd and even sections into a block diagonal matrix with only the lowest eigenvectors and eigenvalues
+        E_even_trunc, E_odd_trunc = self.N_lowest_states(E_even,E_odd, truncate_lim=truncate_lim)
+        E = np.append(E_even[:E_even_trunc], E_odd[:E_odd_trunc])
+        phi = block_diag(phi_even[:E_even_trunc], phi_odd[:E_odd_trunc])
+
+        G_matrix = np.zeros((len(sites), len(sites), len(bias_range)))
+
+        Es_a, Es_b = np.meshgrid(E, E)
+        Es_ba = Es_b - Es_a
+        Es_ab = -Es_ba
+        Tsq_plus_list, Tsq_minus_list = [], []
+        ## For each desired site, get transition rate matrix
+        for site in sites:
+            operators = [self.operator('creation',site,'up'), self.operator('creation',site,'down')] ## Create spin-up and spin-down
+            Tsq_plus = np.abs(self.transition_matrix(phi, operators))**2 
+            Tsq_minus = Tsq_plus.T 
+            Tsq_plus_list.append(Tsq_plus)
+            Tsq_minus_list.append(Tsq_minus)
+
+
+        ## These terms needed for solving rate equation are constant 
+        kBT = lead_params['kBT']
+        Nf_0_plus = n_F(Es_ba, 0, kBT)
+        Nf_0_min = np.ones(np.shape(Es_ba)) - n_F(Es_ab, 0, kBT)
+
+        ## Generate currents from transition rate matrix
+        for i, Vbias in enumerate(bias_range):
+            ## These terms are specific to each Vbias
+            mu_minus = Vbias - lead_params['dV']
+            Nf_mu_plus_minus = n_F(Es_ba, mu_minus, kBT)
+            Nf_mu_min_minus = np.ones(np.shape(Es_ba)) - n_F(Es_ab, mu_minus, kBT)
+
+            mu_plus = Vbias + lead_params['dV']
+            Nf_mu_plus_plus = n_F(Es_ba, mu_plus, kBT)
+            Nf_mu_min_plus = np.ones(np.shape(Es_ba)) - n_F(Es_ab, mu_plus, kBT)
+
+            for j in range(len(sites)):
+                mus = np.zeros(len(sites))
+                mus[j] = mu_minus
+                Is0 = get_Is_vectorized(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Nf_0_plus,Nf_0_min,Nf_mu_plus_minus,Nf_mu_min_minus)
+                
+                mus = np.zeros(len(sites))
+                mus[j] = mu_plus
+                Is1 = get_Is_vectorized(len(sites), Tsq_plus_list, Tsq_minus_list, lead_params['gammas'], mus, Nf_0_plus,Nf_0_min, Nf_mu_plus_plus,Nf_mu_min_plus)
+                
+                gs = 2 * np.pi * (Is1 - Is0) / (2*lead_params['dV'])
+                G_matrix[:, j, i] = gs
         return G_matrix
 
     @staticmethod

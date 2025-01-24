@@ -101,19 +101,21 @@ def get_Is_vectorized(num_of_leads, Tsq_plus_list, Tsq_minus_list, gammas, mus, 
 ########################################################################################
 
 class FermionSystem:
-    def __init__(self, N):
+    def __init__(self, N: int, store_fock_states: bool=True):
         '''
         Class for handling fermionic operator and states logic with binary operations
         Args: 
             N: the number of Fermionic sites in the system
-            pos_bits: the number of bits required to store the site an operator acts on
+            pos_bits: the number of bits required to store the position an operator acts on
+            store_fock_states: whether to generate a list of all integers representing the fock states
             fock_states: list of all possible states (integers) in a system of size N
                          In principle no need to generate this list, can choose to make it optional 
                          since memory becomes an issue otherwise for large N
         '''
         self.N = N
         self.pos_bits = int(np.ceil(np.log2(2*N)))
-        self.fock_states = np.arange(0,2**(2*N), dtype=np.int32)
+        if store_fock_states:
+            self.fock_states = np.arange(0,2**(2*N), dtype=np.int32)
  
     def operator(self,type: str, position: int, spin: str):
         '''
@@ -684,7 +686,7 @@ class ParitySystem(FermionSystem):
         return E_odd,E_even, np.transpose(phi_odd),np.transpose(phi_even)
 
     @staticmethod
-    def sel_ground_states(E_odd: list, E_even: list, threshold: float  = 1):
+    def sel_ground_states(E_odd: list, E_even: list, threshold: float  = 0.001):
         ''' 
         Determine the idx of the lowest ground state, between the odd and even sector
         Selects multiple in case of degeneracies, within the given threshhold
@@ -969,11 +971,11 @@ class ParitySystem(FermionSystem):
         ## For each desired site, get transition rate matrix
         for site in sites:
             operators = [self.operator('creation',site,'up'), self.operator('creation',site,'down')] ## Create spin-up and spin-down
+
             Tsq_plus = np.abs(self.transition_matrix(phi, operators))**2 
             Tsq_minus = Tsq_plus.T 
             Tsq_plus_list.append(Tsq_plus)
             Tsq_minus_list.append(Tsq_minus)
-
 
         ## These terms needed for solving rate equation are constant 
         kBT = lead_params['kBT']

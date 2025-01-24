@@ -1,8 +1,14 @@
+import os,sys
+current_file_path = os.path.abspath(__file__)
+current_directory = os.path.dirname(current_file_path)
+sys.path.append(current_directory)
+
 import FermionSystem as fst
 import numpy as np
 from functools import partial
 from tqdm import tqdm
 import proplot as pplt
+import xarray as xr
 
 
 def get_chain_terms(fs,dist,types, spins):
@@ -85,12 +91,15 @@ def map_H_params_kitaev(fs,H_params):
     for param in H_params.keys():
         if param[0] == 'm':
             for idx,val in enumerate(H_params[param]):
+                base_symb = f'\u03BC'
                 oper_0 = fs.operator('creation',idx, 'up')
                 oper_1 = fs.operator('annihilation',idx,'up')
                 oper_type = fs.oper_list_to_str(fs.normal_order([oper_0, oper_1])[0])
                 value = val + H_params['Ez'][idx]
                 H_vals[oper_type] = value/2 # halfvalue due to duplicate in matvec
                 H_types[f'{param}_u_{idx}'] = oper_type
+                spin_symb = f'{spin_map["u"][1]}'
+                H_symbols[oper_type] = '$' + f'{base_symb}_'+'{' + f'{spin_symb},{idx}' + '}' + '$'
 
                 oper_0 = fs.operator('creation',idx,'down')
                 oper_1 = fs.operator('annihilation',idx,'down')
@@ -99,8 +108,13 @@ def map_H_params_kitaev(fs,H_params):
                 H_vals[oper_type] = value/2
                 H_types[f'{param}_d_{idx}'] = oper_type
 
+                spin_symb = f'{spin_map["d"][1]}'
+                H_symbols[oper_type] = '$' + f'{base_symb}_'+'{' + f'{spin_symb},{idx}' + '}$'
+
+
         if param[0] == 'U':
             for idx,val in enumerate(H_params[param]):
+                base_symb = 'U'
                 oper_0 = fs.operator('creation',idx, 'up')
                 oper_1 = fs.operator('annihilation',idx,'up')
                 oper_2 = fs.operator('creation',idx, 'down')
@@ -109,6 +123,8 @@ def map_H_params_kitaev(fs,H_params):
                 value = val/2
                 H_vals[oper_type] = value
                 H_types[f'U_{idx}'] = oper_type
+                H_symbols[oper_type] = '$' + f'{base_symb}'+'_{' + f'{idx}' + '}' + '$'
+
     return H_vals,H_symbols,H_types
 
 def phase_space(chain, vary_params_x, x_vals,  vary_params_y,y_vals, T=3):
@@ -160,33 +176,47 @@ def make_kitaev_chain(N,H_params, Ez_inf = True, U_inf = True, make_arrays=False
         chain.H_to_array('even')
     return chain
 
-def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], lead_params = {},plot=True, method='linalg', n_values=1):
-    Gs = [[] for i in range(len(sites))]
-    
+def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], lead_params = {}, plot=True, method='linalg', n_values=1):
+    n_sites = len(sites)
+    Gs = [[[] for i in range(n_sites)] for j in range(n_sites)]
     for v_idx in tqdm(np.arange(len(param_range))):
         chain.update_H_param_list(params, param_range[v_idx], update_matrix=True) 
 
 
         G_matrix = chain.rate_equation(sites,bias_range,lead_params, method=method, truncate_lim=n_values)
 
-        for i in range(len(sites)):
-            Gs[i].append(G_matrix[i][i])
+        for i in range(n_sites):
+            for j in range(n_sites):
+                Gs[i][j].append(G_matrix[i][j])
     if plot:
         ## Create Figure
         fig, axs = pplt.subplots(np.arange(len(sites))+1, figwidth = len(sites)*2.5, figheight = 2.2, grid='off')
         fig.format(xlabel = '$\delta \mu$', ) #xlocator=0.1,xminorlocator=0.05, ylocator=0.1,yminorlocator=0.05)
         fig.format(ylabel = '$V_{\mathrm{bias}}$')
-        for i in range(len(sites)):
-            im = axs[i].pcolormesh(param_range,bias_range,np.transpose(Gs[i]))
+        for i in range(n_sites):
+            im = axs[i].pcolormesh(param_range,bias_range,np.transpose(Gs[i][i]))
             cbar = fig.colorbar(im,ax = axs[i], width = 0.05)
-    else:
-        return Gs
+
+    ## Generate an xarray dataset
+    param_str = params[0][:2]
+    coords = {
+        'bias': xr.DataArray(bias_range, dims='bias', attrs={'long_name': 'bias', 'units':'-'}),
+        f'{param_str}':xr.DataArray(param_range, dims=f'{param_str}',attrs= {'long_name': 'h_param', 'units':'-'})
+    }
+    datasets = {}
+    for i in range(n_sites):
+        for j in range(n_sites):
+            datasets['G_'+f'{sites[i]}{sites[j]}'] = (['bias', f'{param_str}'], Gs[i][j],{'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
+    ds = xr.Dataset(
+        datasets,
+        coords=coords  # Define coordinates
+    )
+    return ds
 
 def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals, sites = [0,1], lead_params={}, method='linalg', n_values=5):
-    Gs = [[] for i in range(len(sites)**2)]
-    shape = (len(y_vals), len(x_vals))
+    n_sites = len(sites)
+    Gs = [[[] for i in range(n_sites)] for j in range(n_sites)]
     for y_val in tqdm(y_vals):
-    
         chain.update_H_param_list(vary_params_y, y_val, update_matrix=True)
 
         for x_val in x_vals:
@@ -194,12 +224,27 @@ def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals
 
             G_matrix = chain.rate_equation(sites,[0],lead_params, method=method, truncate_lim=n_values)
 
-            for i,g in enumerate(G_matrix.flatten()):
-                Gs[i].append(g)
+            for i in range(n_sites):
+                for j in range(n_sites):
+                    Gs[i][j].append(G_matrix[i][j])
+
+          
    
-    reshaped_Gs = []
-    for g in Gs:
-        reshaped_Gs.append(np.reshape(g,shape))
-    return reshaped_Gs
+    ## Generate an xarray dataset
+    param_x = vary_params_x[0]
+    param_y = vary_params_y[0]
+    coords = {
+        f'{param_x}': xr.DataArray(x_vals, dims=f'{param_x}', attrs={'long_name': 'h_param_x', 'units':'-'}),
+        f'{param_y}':xr.DataArray(y_vals, dims=f'{param_y}',attrs= {'long_name': 'h_param_y', 'units':'-'})
+    }
+    datasets = {}
+    for i in range(n_sites):
+        for j in range(n_sites):
+            datasets['G_'+f'{sites[i]}{sites[j]}'] = ([ f'{param_x}',f'{param_y}'], np.reshape(Gs[i][j],(len(x_vals),len(y_vals))),{'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
+    ds = xr.Dataset(
+        datasets,
+        coords=coords  # Define coordinates
+    )
+    return ds
 
 

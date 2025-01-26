@@ -126,6 +126,16 @@ def map_H_params_kitaev(fs,H_params):
 
     return H_vals,H_symbols,H_types
 
+def make_kitaev_chain(N,H_params, Ez_inf = True, U_inf = True, make_arrays=False, sparse_function = None):
+    fs = fst.FermionSystem(N)
+    generate_kit = partial(make_kitaev_hamiltonian,fs)
+    generate_map = partial(map_H_params_kitaev,fs,H_params)
+    chain = fst.ParitySystem(N = N, H_generator=generate_kit,H_mapping = generate_map,sparse_function=sparse_function, Ez_inf = Ez_inf, U_inf=U_inf)
+    if make_arrays:
+        chain.H_to_array('odd')
+        chain.H_to_array('even')
+    return chain
+
 def phase_space(chain, vary_params_x, x_vals,  vary_params_y,y_vals, T=3):
     EoddEeven = []
     Eexp = []
@@ -145,24 +155,6 @@ def phase_space(chain, vary_params_x, x_vals,  vary_params_y,y_vals, T=3):
     Eexp = np.reshape(Eexp,shape)
     return EoddEeven,Eexp
 
-def energy_spectrum(chain, params, param_range, site, fig, ax, plot=True):
-	all_energies,all_weights,all_xvars = [],[],[]
-	for v_idx in tqdm(np.arange(len(param_range))):
-		chain.update_H_param_list(params, param_range[v_idx], update_matrix=True) 
-
-
-
-		energies,weights = chain.lowest_transitions_sorted(site)
-		all_energies.extend(energies)
-		all_weights.extend(weights)
-		all_xvars.extend(np.full(len(weights), param_range[v_idx]))
-	if plot:
-		plot_energy_spectrum(fig, ax, all_xvars, all_energies, all_weights,param_range[v_idx],site)
-	else:
-		return all_xvars,all_energies,all_weights
-
-
-
 def energy_spectrum(chain, params, param_range, sites, fig, axs, plot=True):
     all_energies,all_weights,all_xvars = [[] for i in range(len(sites))],[[] for i in range(len(sites))],[[] for i in range(len(sites))]
     for v_idx in tqdm(np.arange(len(param_range))):
@@ -180,21 +172,10 @@ def energy_spectrum(chain, params, param_range, sites, fig, axs, plot=True):
     else:
         return all_xvars,all_energies,all_weights
 
-       
 def plot_energy_spectrum(fix, ax,mu, energies,weights, xval,site):
     ax.scatter(mu,energies, alpha=  np.abs(weights) , s=3, color = 'black')
     ax.format(ylabel = '$E_{T}$')
     ax.format(title = f'Spectum site {site}', fontsize = 7)
-
-def make_kitaev_chain(N,H_params, Ez_inf = True, U_inf = True, make_arrays=False, sparse_function = None):
-    fs = fst.FermionSystem(N)
-    generate_kit = partial(make_kitaev_hamiltonian,fs)
-    generate_map = partial(map_H_params_kitaev,fs,H_params)
-    chain = fst.ParitySystem(N = N, H_generator=generate_kit,H_mapping = generate_map,sparse_function=sparse_function, Ez_inf = Ez_inf, U_inf=U_inf)
-    if make_arrays:
-        chain.H_to_array('odd')
-        chain.H_to_array('even')
-    return chain
 
 def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], lead_params = {}, plot=True, method='linalg', n_values=1):
     n_sites = len(sites)
@@ -247,8 +228,6 @@ def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals
             for i in range(n_sites):
                 for j in range(n_sites):
                     Gs[i][j].append(G_matrix[i][j])
-
-          
    
     ## Generate an xarray dataset
     param_x = vary_params_x[0]
@@ -260,7 +239,7 @@ def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals
     datasets = {}
     for i in range(n_sites):
         for j in range(n_sites):
-            datasets['G_'+f'{sites[i]}{sites[j]}'] = ( np.reshape(Gs[i][j],(len(x_vals),len(y_vals))), [ f'{param_x}',f'{param_y}'], {'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
+            datasets['G_'+f'{sites[i]}{sites[j]}'] = ([ f'{param_x}',f'{param_y}'],  np.reshape(Gs[i][j],(len(x_vals),len(y_vals))),{'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
     ds = xr.Dataset(
         datasets,
         coords=coords  # Define coordinates

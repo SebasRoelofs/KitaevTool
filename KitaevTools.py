@@ -111,7 +111,6 @@ def map_H_params_kitaev(fs,H_params):
                 spin_symb = f'{spin_map["d"][1]}'
                 H_symbols[oper_type] = '$' + f'{base_symb}_'+'{' + f'{spin_symb},{idx}' + '}$'
 
-
         if param[0] == 'U':
             for idx,val in enumerate(H_params[param]):
                 base_symb = 'U'
@@ -151,6 +150,8 @@ def energy_spectrum(chain, params, param_range, site, fig, ax, plot=True):
 	for v_idx in tqdm(np.arange(len(param_range))):
 		chain.update_H_param_list(params, param_range[v_idx], update_matrix=True) 
 
+
+
 		energies,weights = chain.lowest_transitions_sorted(site)
 		all_energies.extend(energies)
 		all_weights.extend(weights)
@@ -159,6 +160,25 @@ def energy_spectrum(chain, params, param_range, site, fig, ax, plot=True):
 		plot_energy_spectrum(fig, ax, all_xvars, all_energies, all_weights,param_range[v_idx],site)
 	else:
 		return all_xvars,all_energies,all_weights
+
+
+
+def energy_spectrum(chain, params, param_range, sites, fig, axs, plot=True):
+    all_energies,all_weights,all_xvars = [[] for i in range(len(sites))],[[] for i in range(len(sites))],[[] for i in range(len(sites))]
+    for v_idx in tqdm(np.arange(len(param_range))):
+        chain.update_H_param_list(params, param_range[v_idx], update_matrix=True) 
+
+        energies,weights = chain.lowest_transitions_sorted(sites)
+
+        for i in range(len(sites)):
+            all_energies[i].extend(energies[i])
+            all_weights[i].extend(weights[i])
+            all_xvars[i].extend(np.full(len(weights[i]), param_range[v_idx]))
+    if plot:
+        for i in range(len(sites)):
+            plot_energy_spectrum(fig, axs[i], all_xvars[i], all_energies[i], np.array(all_weights[i]),param_range[v_idx],sites[i])
+    else:
+        return all_xvars,all_energies,all_weights
 
        
 def plot_energy_spectrum(fix, ax,mu, energies,weights, xval,site):
@@ -194,22 +214,22 @@ def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], l
         fig.format(xlabel = '$\delta \mu$', ) #xlocator=0.1,xminorlocator=0.05, ylocator=0.1,yminorlocator=0.05)
         fig.format(ylabel = '$V_{\mathrm{bias}}$')
         for i in range(n_sites):
-            im = axs[i].pcolormesh(param_range,bias_range,np.transpose(Gs[i][i]))
+            im = axs[i].pcolormesh(param_range,bias_range,np.transpose(Gs[i][i]),)
             cbar = fig.colorbar(im,ax = axs[i], width = 0.05)
 
     ## Generate an xarray dataset
     param_str = params[0][:2]
-    coords = {
-        'bias': xr.DataArray(bias_range, dims='bias', attrs={'long_name': 'bias', 'units':'-'}),
-        f'{param_str}':xr.DataArray(param_range, dims=f'{param_str}',attrs= {'long_name': 'h_param', 'units':'-'})
-    }
+   
+    coords = {f'bias_{s}': xr.DataArray(bias_range,dims=f'bias_{s}', attrs={'long_name': f'bias_{s}', 'units':'-'}) for s in sites}
+    coords[f'{param_str}'] =xr.DataArray(param_range, dims = f'{param_str}', attrs={'long_name': f'{param_str}', 'units':''})
+
     datasets = {}
     for i in range(n_sites):
         for j in range(n_sites):
-            datasets['G_'+f'{sites[i]}{sites[j]}'] = (['bias', f'{param_str}'], Gs[i][j],{'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
+            datasets['G_'+f'{sites[i]}{sites[j]}'] =([f'bias_{sites[j]}', f'{param_str}'], np.reshape(Gs[i][j],(len(param_range),len(bias_range))), {'long_name':'G_'+f'{sites[i]}{sites[j]}', 'unit':'x'})
     ds = xr.Dataset(
-        datasets,
-        coords=coords  # Define coordinates
+       data_vars= datasets,
+       coords=coords  # Define coordinates
     )
     return ds
 
@@ -240,7 +260,7 @@ def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals
     datasets = {}
     for i in range(n_sites):
         for j in range(n_sites):
-            datasets['G_'+f'{sites[i]}{sites[j]}'] = ([ f'{param_x}',f'{param_y}'], np.reshape(Gs[i][j],(len(x_vals),len(y_vals))),{'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
+            datasets['G_'+f'{sites[i]}{sites[j]}'] = ( np.reshape(Gs[i][j],(len(x_vals),len(y_vals))), [ f'{param_x}',f'{param_y}'], {'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
     ds = xr.Dataset(
         datasets,
         coords=coords  # Define coordinates

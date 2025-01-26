@@ -820,6 +820,55 @@ class ParitySystem(FermionSystem):
             weights_all.extend(weights)
         return T_all,weights_all
 
+    def lowest_transitions_sorted(self,sites: int, method: str='linalg',n_values: int = 1, threshold: float = 1):
+        ''' 
+        Set-up for calculating possible single-electron transitions between odd/even ground states and the excited states
+        for adding holes/electrons to a given site
+        Included for speed compared to solving the rate equation
+
+        Args:
+            site: the fermionic site to calculate transitions for
+            method: method to use for solving the hamiltonian
+            n_values: number of lowest eigenvalues to obtain, only relevant if method='sparse'
+            thresshold: range within which to consider a groundstate degenerate
+        '''
+        E_odd,E_even, phi_odd,phi_even = self.solve_system(method=method,n_values=n_values)
+        odd_gs_idx, even_gs_idx,min_E = self.sel_ground_states(E_odd,E_even, threshold=threshold)
+        rows_to_keep = []
+        for idx in even_gs_idx: 
+            rows_to_keep.append(idx)
+        for idx in odd_gs_idx:
+            rows_to_keep.append(idx+len(E_even))
+        rows_to_keep=np.array(rows_to_keep)
+        T_all = [[] for i in range(len(sites))]
+        weights_all = [[] for i in range(len(sites))]
+        ## Merge the odd and even sections into a block diagonal matrix with only the lowest eigenvectors and eigenvalues
+        E = np.append(E_even, E_odd)
+        phi = block_diag(phi_even, phi_odd)
+
+        Es_a, Es_b = np.meshgrid(E, E)
+        Es_ba = Es_b - Es_a
+        ## For each desired site, get transition rate matrix
+        for idx,site in enumerate(sites):
+            operators = [[self.operator('creation',site,'up')], [self.operator('creation',site,'down')]] ## Create spin-up and spin-down
+            Tsq_plus = np.abs(self.bra_oper_ket(self.fock_states, phi, operators))**2 
+            Tsq_minus = Tsq_plus.T 
+            
+            T_all[idx].extend(Es_ba[rows_to_keep].flatten())
+            T_all[idx].extend(-Es_ba[rows_to_keep].flatten())
+            weights_all[idx].extend(Tsq_plus[rows_to_keep].flatten())
+            weights_all[idx].extend(Tsq_minus[rows_to_keep].flatten())
+
+        filtered_T_all = [[] for i in range(len(sites))]
+        filtered_weights = [[] for i in range(len(sites))]
+        for idx in range(len(sites)):
+            filter_zeros = np.where(np.array(weights_all[idx]) > 0)[0]
+
+            filtered_T_all[idx] = np.array(T_all[idx])[filter_zeros]
+            filtered_weights[idx] = np.array(weights_all[idx])[filter_zeros]
+
+        return filtered_T_all, filtered_weights
+
     
     def lowest_transitions(self, E_gs, phi_gs, gs_states, E_excited, phi_excited, excited_states, site):
         '''

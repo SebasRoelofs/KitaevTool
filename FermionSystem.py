@@ -269,8 +269,47 @@ class FermionSystem:
         normal_ordered, sign = self.normal_order(oper_list)
         return normal_ordered,sign
 
+    '''
+    Version that works with single-operator sequences. More general version included below
+    def bra_oper_ket(self, states, phi, operators):
+        size = len(phi[:,0])
+        T_ij = np.zeros((size,size), dtype=complex)
+        zero_col = np.zeros(size, dtype=complex)
+        for oper in operators:
+            new_states,signs = self.act_oper(oper, states)
 
-    def vis_oper(self,oper):
+            trans_array = [phi[:,np.where(new_states == states[i])[0]].T[0]*signs[np.where(new_states == states[i])[0]] if (states[i] in new_states) else zero_col for i in range(len(states))]
+            T_ij += np.conj(phi) @ trans_array
+        return T_ij
+    '''
+
+    def bra_oper_ket(self, states: list, phi: np.ndarray , operators:list):
+        '''
+        Calculate <phi|operator|phi> matrix for an operator sequence
+        If multiple operator sequences are included, the contributions will be summed
+        Args:
+            states: list of states to operate on
+            phi: array of weights of the states
+            operators: list of operator lists to apply
+        '''
+        size = len(phi[:,0])
+        T_ij = np.zeros((size,size), dtype=complex)
+        zero_col = np.zeros(size, dtype=complex)
+        trans_array = np.zeros((len(phi[0]), len(phi)), dtype='complex')
+
+        for oper_list in operators:
+            old_states, new_states,signs = self.act_oper_list(oper_list, states)
+            
+            col_indices = [np.where(states == old_states[i])[0][0] for i in range(len(old_states)) if new_states[i] in states]
+            row_indices = [np.where(states == new_states[i])[0][0] for i in range(len(new_states)) if new_states[i] in states]
+            relevant_signs = [[signs[i]] for i in range(len(signs)) if new_states[i] in states]
+            
+            if len(row_indices) > 0:
+                trans_array[row_indices] = np.transpose(phi[:,col_indices])*relevant_signs
+                T_ij += np.conj(phi) @ trans_array
+        return T_ij
+
+    def vis_oper(self,oper:int):
         '''
         Convert an integer representing an operator to a readable string
         Args:
@@ -904,16 +943,7 @@ class ParitySystem(FermionSystem):
     
         ax.axis('off')
 
-    def transition_matrix(self, phi, operators):
-        T_ij = np.zeros((len(phi[:,0]),len(phi[:,0])), dtype=complex)
-        zero_col = np.zeros(len(phi[:,0]), dtype=complex)
-        for oper in operators:
-            trans_array = []
-            new_states,signs = self.act_oper(oper, self.fock_states)
-            trans_array = [np.conj(phi[:,np.where(new_states == self.fock_states[i])[0]].T[0])*signs[i] if (self.fock_states[i] in new_states) else zero_col for i in range(len(self.fock_states))]
-            T_ij += phi @ trans_array
-        return T_ij
-
+    '''
     ### Old version, slightly faster implementation added below
     def rate_equation_old(self, sites,bias_range, lead_params, truncate_lim = 20, method = 'linalg'):
         ## Solve for energies and wavefunctions
@@ -932,7 +962,7 @@ class ParitySystem(FermionSystem):
         ## For each desired site, get transition rate matrix
         for site in sites:
             operators = [self.operator('creation',site,'up'), self.operator('creation',site,'down')] ## Create spin-up and spin-down
-            Tsq_plus = np.abs(self.transition_matrix(phi, operators))**2 
+            Tsq_plus = np.abs(self.bra_oper_ket(self.fock_states,phi, operators))**2 
             Tsq_minus = Tsq_plus.T 
             Tsq_plus_list.append(Tsq_plus)
             Tsq_minus_list.append(Tsq_minus)
@@ -952,6 +982,7 @@ class ParitySystem(FermionSystem):
                 G_matrix[:, j, i] = gs
                 
         return G_matrix
+    '''
 
     def rate_equation(self, sites,bias_range, lead_params, truncate_lim = 100, method = 'linalg'):
         ## Solve for energies and wavefunctions
@@ -970,9 +1001,9 @@ class ParitySystem(FermionSystem):
         Tsq_plus_list, Tsq_minus_list = [], []
         ## For each desired site, get transition rate matrix
         for site in sites:
-            operators = [self.operator('creation',site,'up'), self.operator('creation',site,'down')] ## Create spin-up and spin-down
+            operators = [[self.operator('creation',site,'up')], [self.operator('creation',site,'down')]] ## Create spin-up and spin-down
 
-            Tsq_plus = np.abs(self.transition_matrix(phi, operators))**2 
+            Tsq_plus = np.abs(self.bra_oper_ket(self.fock_states, phi, operators))**2 
             Tsq_minus = Tsq_plus.T 
             Tsq_plus_list.append(Tsq_plus)
             Tsq_minus_list.append(Tsq_minus)

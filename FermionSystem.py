@@ -644,6 +644,8 @@ class ParitySystem(FermionSystem):
             values[replace_value_indices] = signs*new_val 
             
             ## If required, update the matrix forms
+            ## TO DO: should be possible to avoid the for-loop here, but did not manage
+            ## to get it to work 
             if update_matrix:
                 H=Hs[i]
                 for r,c,p in zip(terms[0][type_match],terms[1][type_match],terms[2][type_match]):
@@ -652,7 +654,7 @@ class ParitySystem(FermionSystem):
                     H[c,r] -= np.conj(old_val*p)
                     H[c,r] += np.conj(new_val*p)
             i+=1
-    
+
     def solve_system(self, method='linalg', n_values=None,):
         '''
             Calculate the eigenvalues and eigenstates of the odd and even parity sectors
@@ -752,7 +754,6 @@ class ParitySystem(FermionSystem):
                 even_gs.append(idx)
         return odd_gs,even_gs, min_e
 
-
     def eigenstates(self, only_ground_states=False, only_energies = False):
         '''
         Calculate and display the eigenstates of the system, sorted by energy
@@ -791,9 +792,6 @@ class ParitySystem(FermionSystem):
                     print(f"{label:<20} E = {np.round(state[0],2):<10.2f}")
                 else:
                     print(f"{label:<20} E = {np.round(state[0],2):<10.2f} \u007C\u03C6\u3009= {self.vis_state_list(states_list[state[3]],  state[1])}")
-
-
-
     
     def show_hamiltonian_numeric(self, parity, width):
         '''

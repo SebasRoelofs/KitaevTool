@@ -113,7 +113,7 @@ def map_H_params_kitaev(fs,H_params):
             spin_1 = spin_map[param[-1]][0]
             base_symb = '\u0394'
             spin_symb = f'{spin_map[param[-2]][1]}{spin_map[param[-1]][1]}'
-            dist=0
+            dist=1
         elif param[0] == 't':
             type = ['annihilation','creation']
             spin_0 = spin_map[param[-2]][0]

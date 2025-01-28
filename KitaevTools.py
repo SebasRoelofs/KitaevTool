@@ -59,6 +59,47 @@ def make_kitaev_hamiltonian(fs):
         sign_terms.append(1)
     return kitaev_terms,sign_terms
 
+
+def make_qd_abs_qd_hamiltonian(fs):
+    kitaev_terms = []
+    sign_terms = []
+    spin_combis = [['up','up'],['up','down'],['down','up'],['down','down']]
+    rel_signs = [1,-1,1,1]
+    hopping = ['annihilation','creation']
+    pairing = ['creation','creation']
+    
+    ## Get all next nearest-neighbour interactions
+    for rel_sign,spin in zip(rel_signs,spin_combis):
+        hop_terms = get_chain_terms(fs,1, hopping, spin)
+        for t in hop_terms:
+            kitaev_terms.append(t)
+            sign_terms.append(rel_sign)
+            
+        pair_terms = get_chain_terms(fs,0, pairing,spin)
+        for t in pair_terms:
+            kitaev_terms.append(t)
+            sign_terms.append(rel_sign)
+
+    ## Chemical Potential
+    for spin in ['up','down']:
+        for i in range(fs.N):
+            oper_0 = fs.operator('creation', i, spin)
+            oper_1 = fs.operator('annihilation', i, spin)
+            term = fs.normal_order([oper_0, oper_1])[0] 
+            kitaev_terms.append(term)
+            sign_terms.append(1)
+
+    ## Charging Energy
+    for i in range(fs.N):
+        oper_0 = fs.operator('creation', i, 'up')
+        oper_1 = fs.operator('creation', i, 'down')
+        oper_2 = fs.operator('annihilation', i, 'up')
+        oper_3 = fs.operator('annihilation', i, 'down')
+        term = fs.normal_order([oper_0, oper_1,oper_2,oper_3])[0] 
+        kitaev_terms.append(term)
+        sign_terms.append(1)
+    return kitaev_terms,sign_terms
+
 def map_H_params_kitaev(fs,H_params):
     H_vals = {}
     H_symbols = {}
@@ -72,17 +113,19 @@ def map_H_params_kitaev(fs,H_params):
             spin_1 = spin_map[param[-1]][0]
             base_symb = '\u0394'
             spin_symb = f'{spin_map[param[-2]][1]}{spin_map[param[-1]][1]}'
+            dist=0
         elif param[0] == 't':
             type = ['annihilation','creation']
             spin_0 = spin_map[param[-2]][0]
             spin_1 = spin_map[param[-1]][0]
             base_symb = 't'
             spin_symb = f'{spin_map[param[-2]][1]}{spin_map[param[-1]][1]}'
+            dist=1
         else:
             continue
         for idx,val in enumerate(H_params[param]):
             oper_0 = fs.operator(type[0], idx, spin_0)
-            oper_1 = fs.operator(type[1], idx + 1, spin_1)
+            oper_1 = fs.operator(type[1], idx + dist, spin_1)
             oper_type = fs.oper_list_to_str(fs.normal_order([oper_0, oper_1])[0])
             H_vals[oper_type] = val
             H_symbols[oper_type] = '$' + f'{base_symb}_'+'{' + f'{spin_symb}' + '}^{' + f'{idx}' + '}' + '$'
@@ -131,6 +174,17 @@ def make_kitaev_chain(N,H_params, Ez_inf = True, U_inf = True, make_arrays=False
     generate_kit = partial(make_kitaev_hamiltonian,fs)
     generate_map = partial(map_H_params_kitaev,fs,H_params)
     chain = fst.ParitySystem(N = N, H_generator=generate_kit,H_mapping = generate_map,sparse_function=sparse_function, Ez_inf = Ez_inf, U_inf=U_inf)
+    if make_arrays:
+        chain.H_to_array('odd')
+        chain.H_to_array('even')
+    return chain
+
+
+def make_qd_abs_qd_chain(N,H_params, make_arrays=False, sparse_function = None):
+    fs = fst.FermionSystem(N)
+    generate_kit = partial(make_qd_abs_qd_hamiltonian,fs)
+    generate_map = partial(map_H_params_kitaev,fs,H_params)
+    chain = fst.ParitySystem(N = N, H_generator=generate_kit,H_mapping = generate_map,sparse_function=sparse_function, Ez_inf = False, U_inf=False)
     if make_arrays:
         chain.H_to_array('odd')
         chain.H_to_array('even')
@@ -207,7 +261,7 @@ def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], l
     datasets = {}
     for i in range(n_sites):
         for j in range(n_sites):
-            datasets['G_'+f'{sites[i]}{sites[j]}'] =([f'bias_{sites[j]}', f'{param_str}'], np.reshape(Gs[i][j],(len(param_range),len(bias_range))), {'long_name':'G_'+f'{sites[i]}{sites[j]}', 'unit':'x'})
+            datasets['G_'+f'{sites[i]}{sites[j]}'] =([ f'{param_str}',f'bias_{sites[j]}',], np.reshape(Gs[i][j],(len(param_range),len(bias_range))), {'long_name':'G_'+f'{sites[i]}{sites[j]}', 'unit':'x'})
     ds = xr.Dataset(
        data_vars= datasets,
        coords=coords  # Define coordinates

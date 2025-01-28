@@ -128,12 +128,12 @@ class FermionSystem:
         Returns:
             oper (int): integer representing the operator
         '''
-        creation = (type=='creation')
-        spin = 0 if (spin=='down') else 1
-        oper = self.construct_operator(position, spin,creation)
+        annihilation = (type.startswith('a'))
+        spin = 0 if (spin.startswith('d')) else 1
+        oper = self.construct_operator(position, spin,annihilation)
         return oper
         
-    def construct_operator(self,position: int, spin: int, creation: bool = True):
+    def construct_operator(self,position: int, spin: int, annihilation: bool = True):
         ''' 
         Creates the integer representing an operator. The first bits store the bit position of 
         the operator to act on, which depends on position and spin
@@ -147,7 +147,7 @@ class FermionSystem:
             oper (int): integer representing an operator
         '''
         shift = (position<<1) + spin
-        oper = shift + (creation << self.pos_bits)
+        oper = shift + (annihilation << self.pos_bits)
         return oper
 
     def act_oper(self,oper: int,states: np.ndarray):
@@ -164,7 +164,7 @@ class FermionSystem:
             signs: list of signs resulting from applying the operator 
         '''
         ## Check the creation/annihilation bit
-        check_bit = ((1 << self.pos_bits) & oper != 0)
+        check_bit = ((1 << self.pos_bits) & oper == 0)
     
         ## Get the position of the bit to flip
         flip_bit_pos = oper & int('1'* self.pos_bits,2)
@@ -222,7 +222,7 @@ class FermionSystem:
         for i in range(len(oper_list)-1):
             flag_swap = False
             for j in range(len(oper_list)-1):
-                if oper_list[j] > oper_list[j+1]:
+                if oper_list[j] < oper_list[j+1]:
                     flag_swap=True
                     temp = oper_list[j+1]
                     oper_list[j+1] = oper_list[j] 
@@ -230,7 +230,9 @@ class FermionSystem:
                     ferm_sign*= -1
             ## if no swap took place, list is sorted
             if not flag_swap:
+
                 return oper_list,ferm_sign
+
         return oper_list,ferm_sign
 
     def state_to_oper_list(self,state:int):
@@ -242,13 +244,14 @@ class FermionSystem:
         pos = 0
         while state:
             if (state & 0B1):
-                oper = self.construct_operator(int(np.floor(pos/2)), pos%2, creation=True)
+                oper = self.construct_operator(int(np.floor(pos/2)), pos%2, annihilation=False)
                 oper_list.append(oper)
             state = state >> 1
             pos += 1
-        return oper_list
+        return self.normal_order(oper_list)[0]
 
-
+    ## TO DO
+    ## Handle the sign properly (is now wrong)
     def state_to_state(self, state_1:int, state_2: int):
         '''
         Given 2 states, returns the sequence of operators
@@ -259,14 +262,15 @@ class FermionSystem:
         oper_list = []
         while state_diff:
             if (state_diff & 0B1):
-                creation = state_2 & 0B1
-                oper = self.construct_operator(int(np.floor(pos/2)), pos%2, creation=creation)
+                annihilation = (state_2 & 0B1) != 1
+                oper = self.construct_operator(int(np.floor(pos/2)), pos%2, annihilation=annihilation)
                 oper_list.append(oper)
             state_diff = state_diff >> 1
             state_1 = state_1 >> 1
             state_2 = state_2 >> 1
             pos+= 1
-        normal_ordered, sign = self.normal_order(oper_list)
+        normal_ordered,sign = self.normal_order(oper_list)
+        
         return normal_ordered,sign
 
     '''
@@ -320,7 +324,7 @@ class FermionSystem:
         '''
         spins = ['\u2193', '\u2191']
     
-        creation = ((1 << self.pos_bits) & oper != 0)
+        creation = ((1 << self.pos_bits) & oper == 0)
         act_pos = oper & int('1'* self.pos_bits,2)
         act_pos_proper = np.floor(act_pos/2)
         spin_vis = spins[act_pos % 2]
@@ -343,6 +347,11 @@ class FermionSystem:
             display(Markdown(full_str))
         else:
             return full_str
+
+    def vis_oper_str(self,oper_str,displ=False):
+        oper_list = self.oper_str_to_list(oper_str)
+        output = self.vis_oper_list(oper_list,displ=displ)
+        return output
 
     
 

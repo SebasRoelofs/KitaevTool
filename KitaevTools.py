@@ -268,7 +268,7 @@ def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], l
     )
     return ds
 
-def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals, sites = [0,1], lead_params={}, method='linalg', n_values=5):
+def charge_stability_diagram(chain, vary_params_x, x_vals, vary_params_y,y_vals,  sites = [0,1], lead_params={}, method='linalg', n_values=5):
     n_sites = len(sites)
     Gs = [[[] for i in range(n_sites)] for j in range(n_sites)]
     for y_val in tqdm(y_vals):
@@ -288,12 +288,13 @@ def charge_stability_diagram(chain, vary_params_x, x_vals,  vary_params_y,y_vals
     param_y = vary_params_y[0]
     coords = {
         f'{param_x}': xr.DataArray(x_vals, dims=f'{param_x}', attrs={'long_name': 'h_param_x', 'units':'-'}),
-        f'{param_y}':xr.DataArray(y_vals, dims=f'{param_y}',attrs= {'long_name': 'h_param_y', 'units':'-'})
+        f'{param_y}':xr.DataArray(y_vals, dims=f'{param_y}',attrs= {'long_name': 'h_param_y', 'units':'-'}),
+
     }
     datasets = {}
     for i in range(n_sites):
         for j in range(n_sites):
-            datasets['G_'+f'{sites[i]}{sites[j]}'] = ([ f'{param_x}',f'{param_y}'],  np.reshape(Gs[i][j],(len(x_vals),len(y_vals))),{'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
+            datasets['G_'+f'{sites[i]}{sites[j]}'] = ([f'{param_y}', f'{param_x}',], np.reshape(Gs[i][j],(len(y_vals),len(x_vals))),{'long_name':'G_'+f'{sites[i]}{sites[j]}','units':'-'})
     ds = xr.Dataset(
         datasets,
         coords=coords  # Define coordinates

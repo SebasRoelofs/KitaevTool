@@ -83,7 +83,7 @@ def get_Is(num_of_leads, Tsq_plus_list, Tsq_minus_list, gammas, mus, Es_ba, kBT)
     return Is
 
 ### n_F(mu=0) is calculated a redundant amount of times above
-### Below gives a (very minimal) speed-up when number of leads gets larger
+### Below gives a (minimal) speed-up when number of leads gets larger
 ### By calculated the Nf terms only once and passing them to get_Is
 def get_Is_vectorized(num_of_leads, Tsq_plus_list, Tsq_minus_list, gammas, mus, Nf_0_plus,Nf_0_min,Nf_mu_plus,Nf_mu_min):
     nF_plus_array = np.array([Nf_mu_plus*gammas[i] if mus[i] != 0 else Nf_0_plus*gammas[i] for i in range(len(mus))])

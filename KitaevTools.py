@@ -5,9 +5,10 @@ sys.path.append(current_directory)
 
 import FermionSystem as fst
 import numpy as np
+import matplotlib.pyplot as plt
+
 from functools import partial
 from tqdm import tqdm
-import proplot as pplt
 import xarray as xr
 
 
@@ -35,47 +36,6 @@ def make_kitaev_hamiltonian(fs):
             sign_terms.append(rel_sign)
             
         pair_terms = get_chain_terms(fs,1, pairing,spin)
-        for t in pair_terms:
-            kitaev_terms.append(t)
-            sign_terms.append(rel_sign)
-
-    ## Chemical Potential
-    for spin in ['up','down']:
-        for i in range(fs.N):
-            oper_0 = fs.operator('creation', i, spin)
-            oper_1 = fs.operator('annihilation', i, spin)
-            term = fs.normal_order([oper_0, oper_1])[0] 
-            kitaev_terms.append(term)
-            sign_terms.append(1)
-
-    ## Charging Energy
-    for i in range(fs.N):
-        oper_0 = fs.operator('creation', i, 'up')
-        oper_1 = fs.operator('creation', i, 'down')
-        oper_2 = fs.operator('annihilation', i, 'up')
-        oper_3 = fs.operator('annihilation', i, 'down')
-        term = fs.normal_order([oper_0, oper_1,oper_2,oper_3])[0] 
-        kitaev_terms.append(term)
-        sign_terms.append(1)
-    return kitaev_terms,sign_terms
-
-
-def make_qd_abs_qd_hamiltonian(fs):
-    kitaev_terms = []
-    sign_terms = []
-    spin_combis = [['up','up'],['up','down'],['down','up'],['down','down']]
-    rel_signs = [1,-1,1,1]
-    hopping = ['annihilation','creation']
-    pairing = ['creation','creation']
-    
-    ## Get all next nearest-neighbour interactions
-    for rel_sign,spin in zip(rel_signs,spin_combis):
-        hop_terms = get_chain_terms(fs,1, hopping, spin)
-        for t in hop_terms:
-            kitaev_terms.append(t)
-            sign_terms.append(rel_sign)
-            
-        pair_terms = get_chain_terms(fs,0, pairing,spin)
         for t in pair_terms:
             kitaev_terms.append(t)
             sign_terms.append(rel_sign)
@@ -179,29 +139,18 @@ def make_kitaev_chain(N,H_params, Ez_inf = True, U_inf = True, make_arrays=False
         chain.H_to_array('even')
     return chain
 
-
-def make_qd_abs_qd_chain(N,H_params, make_arrays=False, sparse_function = None):
-    fs = fst.FermionSystem(N)
-    generate_kit = partial(make_qd_abs_qd_hamiltonian,fs)
-    generate_map = partial(map_H_params_kitaev,fs,H_params)
-    chain = fst.ParitySystem(N = N, H_generator=generate_kit,H_mapping = generate_map,sparse_function=sparse_function, Ez_inf = False, U_inf=False)
-    if make_arrays:
-        chain.H_to_array('odd')
-        chain.H_to_array('even')
-    return chain
-
-def phase_space(chain, vary_params_x, x_vals,  vary_params_y,y_vals, T=3):
+def phase_space(chain, vary_params_x, x_vals,  vary_params_y,y_vals, T=3, disable=False):
     EoddEeven = []
     Eexp = []
     shape = (len(y_vals), len(x_vals))
-    for y_val in tqdm(y_vals):
+    for y_val in tqdm(y_vals,disable=disable):
     
-        chain.update_H_param_list(vary_params_y, y_val, update_matrix=False)
+        chain.update_H_param_list(vary_params_y, y_val, update_matrix=True)
 
         for x_val in x_vals:
-            chain.update_H_param_list(vary_params_x, x_val,update_matrix=False)
+            chain.update_H_param_list(vary_params_x, x_val,update_matrix=True)
 
-            Eodd,Eeven = chain.solve_system(n_values=1, method='sparse')[:2]
+            Eodd,Eeven = chain.solve_system(n_values=1, method='linalg')[:2]
             Eexp.append(np.exp(-(np.abs(Eodd[0]-Eeven[0]))/T))
     
             EoddEeven.append(Eodd[0]-Eeven[0])
@@ -228,8 +177,7 @@ def energy_spectrum(chain, params, param_range, sites, fig, axs, plot=True):
 
 def plot_energy_spectrum(fix, ax,mu, energies,weights, xval,site):
     ax.scatter(mu,energies, alpha=  np.abs(weights) , s=3, color = 'black')
-    ax.format(ylabel = '$E_{T}$')
-    ax.format(title = f'Spectum site {site}', fontsize = 7)
+    ax.set_title(f'Spectum site {site}')
 
 def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], lead_params = {}, plot=True, method='linalg', n_values=1):
     n_sites = len(sites)
@@ -245,12 +193,14 @@ def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], l
                 Gs[i][j].append(G_matrix[i][j])
     if plot:
         ## Create Figure
-        fig, axs = pplt.subplots(np.arange(len(sites))+1, figwidth = len(sites)*2.5, figheight = 2.2, grid='off')
-        fig.format(xlabel = '$\delta \mu$', ) #xlocator=0.1,xminorlocator=0.05, ylocator=0.1,yminorlocator=0.05)
-        fig.format(ylabel = '$V_{\mathrm{bias}}$')
+        fig, axs = plt.subplots(ncols = len(sites), figsize = (len(sites)*2.5,2))
+        for ax in axs:
+            ax.set_xlabel('$\delta \mu$') 
+            ax.set_ylabel('$V_{\mathrm{bias}}$')
         for i in range(n_sites):
-            im = axs[i].pcolormesh(param_range,bias_range,np.transpose(Gs[i][i]),)
-            cbar = fig.colorbar(im,ax = axs[i], width = 0.05)
+            im = axs[i].pcolormesh(param_range,bias_range,np.transpose(Gs[i][i]),cmap='Reds')
+            cbar = fig.colorbar(im,ax = axs[i])
+        plt.tight_layout()
 
     ## Generate an xarray dataset
     param_str = params[0][:2]

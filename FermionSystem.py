@@ -115,7 +115,7 @@ class FermionSystem:
         self.N = N
         self.pos_bits = int(np.ceil(np.log2(2*N)))
         if store_fock_states:
-            self.fock_states = np.arange(0,2**(2*N), dtype=np.int32)
+            self.fock_states = np.arange(0,2**(2*N), dtype=np.int64)
  
     def operator(self,type: str, position: int, spin: str):
         '''
@@ -464,11 +464,11 @@ class ParitySystem(FermionSystem):
 
         ## Gather Odd Hamiltonian
         self.odd_terms = self.act_H_on_subspace(self.odd_states,self.odd_states_hash)
-        self.odd_vals = np.array([self.H_vals[type] for type in self.odd_terms[3]])
+        self.odd_vals = np.array([self.H_vals[type] for type in self.odd_terms[3]], dtype=complex)
 
         ## Gather Even Hamiltonian
         self.even_terms = self.act_H_on_subspace(self.even_states,self.even_states_hash)
-        self.even_vals = np.array([self.H_vals[type] for type in self.even_terms[3]])
+        self.even_vals = np.array([self.H_vals[type] for type in self.even_terms[3]],dtype=complex)
 
     def restrict_and_sort_fockspace(self,Ez_inf: bool, U_inf: bool):
         '''
@@ -529,7 +529,7 @@ class ParitySystem(FermionSystem):
             rows.extend([states_hash.get(state) for state in old_states])
             cols.extend([states_hash.get(state) for state in new_states])
             pars.extend(parities.tolist())
-        return np.array(rows, dtype=np.int32),np.array(cols,dtype=np.int32),np.array(pars),np.array(type)
+        return np.array(rows, dtype=np.int32),np.array(cols,dtype=np.int32),np.array(pars,dtype=np.int32),np.array(type)
 
 
     def H_to_array(self, parity):
@@ -707,7 +707,7 @@ class ParitySystem(FermionSystem):
         E_phi_odd = np.transpose(E_phi_odd)
         E_phi_odd = np.round(E_phi_odd,10) ## Truncate numerical errors
 
-        E_even, E_phi_even = np.linalg.eigh(self.H_even,  UPLO = 'U')
+        E_even, E_phi_even = np.linalg.eigh(self.H_even, UPLO = 'U')
         E_phi_even = np.transpose(E_phi_even)
         E_phi_even = np.round(E_phi_even,10)  ## Truncate numerical errors
 
@@ -720,11 +720,11 @@ class ParitySystem(FermionSystem):
         '''
         ## Construct LinearOperator for odd parity sector
         M_odd = LinearOperator((len(self.odd_states), len(self.odd_states)), 
-                               matvec=partial(self.sparse_function, rows=self.odd_terms[0], cols=self.odd_terms[1],vals=self.odd_vals*self.odd_terms[2]))
+                               matvec=partial(self.sparse_function, rows=self.odd_terms[0], cols=self.odd_terms[1],vals=self.odd_vals*self.odd_terms[2]),dtype=complex)
 
         ## Construct LinearOperator for even parity sector
         M_even = LinearOperator((len(self.even_states), len(self.even_states)), 
-                            matvec=partial(self.sparse_function, rows=self.even_terms[0], cols=self.even_terms[1],vals=self.even_vals*self.even_terms[2]))
+                            matvec=partial(self.sparse_function, rows=self.even_terms[0], cols=self.even_terms[1],vals=self.even_vals*self.even_terms[2]),dtype=complex)
 
         ## n_values cannot be larger than dimension if system -1
         n_values_odd = min([n_values, len(self.odd_states)-1])

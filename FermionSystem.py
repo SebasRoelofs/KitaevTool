@@ -3,11 +3,13 @@ from scipy.linalg import block_diag, null_space
 
 from typing import Callable
 from functools import partial
+from collections import defaultdict
+
 from IPython.display import display, Math,Markdown
 
 import numpy as np
 import matplotlib.pyplot as plt
-
+import networkx as nx
 import time
 
 def hamming_weight(states: np.ndarray):
@@ -273,20 +275,6 @@ class FermionSystem:
         
         return normal_ordered,sign
 
-    '''
-    Version that works with single-operator sequences. More general version included below
-    def bra_oper_ket(self, states, phi, operators):
-        size = len(phi[:,0])
-        T_ij = np.zeros((size,size), dtype=complex)
-        zero_col = np.zeros(size, dtype=complex)
-        for oper in operators:
-            new_states,signs = self.act_oper(oper, states)
-
-            trans_array = [phi[:,np.where(new_states == states[i])[0]].T[0]*signs[np.where(new_states == states[i])[0]] if (states[i] in new_states) else zero_col for i in range(len(states))]
-            T_ij += np.conj(phi) @ trans_array
-        return T_ij
-    '''
-
     def bra_oper_ket(self, states: list, phi: np.ndarray , operators:list):
         '''
         Calculate <phi|operator|phi> matrix for an operator sequence
@@ -449,10 +437,12 @@ class ParitySystem(FermionSystem):
             H_mapping (Callable): a fuction that assigns readable labels to the operators
             sparse_function (Callable): the function of LinearOperator to use when using scipy's sparse solver
             Ez_inf (bool): whether to restrict the subspaces to infinite Ez 
-            U_inf (bool): whether to restrict the subspaces to infinute U
+            U_inf (bool): whether to restrict the subspaces to infinite U
         '''
         super().__init__(N)
+        ## Restrict and divide fock space
         self.odd_states,self.even_states = self.restrict_and_sort_fockspace(Ez_inf = Ez_inf, U_inf=U_inf)
+        
         self.fock_states = np.append(self.even_states,self.odd_states)
         self.odd_states_hash = {num:idx for idx,num in enumerate(self.odd_states)}
         self.even_states_hash = {num:idx for idx,num in enumerate(self.even_states)}
@@ -462,14 +452,7 @@ class ParitySystem(FermionSystem):
         self.H_vals, self.H_symbols,self.H_types = H_mapping()
         self.sparse_function =sparse_function
 
-        ## Gather Odd Hamiltonian
-        self.odd_terms = self.act_H_on_subspace(self.odd_states,self.odd_states_hash)
-        self.odd_vals = np.array([self.H_vals[type] for type in self.odd_terms[3]], dtype=complex)
-
-        ## Gather Even Hamiltonian
-        self.even_terms = self.act_H_on_subspace(self.even_states,self.even_states_hash)
-        self.even_vals = np.array([self.H_vals[type] for type in self.even_terms[3]],dtype=complex)
-
+       
     def restrict_and_sort_fockspace(self,Ez_inf: bool, U_inf: bool):
         '''
         Sorts Fock states into 'even' and 'odd' parities (determined by count of 1's in binary)
@@ -525,12 +508,115 @@ class ParitySystem(FermionSystem):
             old_states = old_states[subspace_filt]
             new_states = new_states[subspace_filt]
             parities = parities[subspace_filt]
+
             type.extend([type_str]*len(parities))
             rows.extend([states_hash.get(state) for state in old_states])
             cols.extend([states_hash.get(state) for state in new_states])
             pars.extend(parities.tolist())
         return np.array(rows, dtype=np.int32),np.array(cols,dtype=np.int32),np.array(pars,dtype=np.int32),np.array(type)
 
+    def gather_H(self):
+        '''
+        Act the Hamiltonian on the odd and even subspaces to generate row and column lists for non-zero term
+    
+        To do: 
+            assert that the states and hamiltonian have been loaded correctly
+        '''
+        ## Gather Odd Hamiltonian
+        self.odd_terms = self.act_H_on_subspace(self.odd_states,self.odd_states_hash)
+    
+        list_1, list_2 = map(list, zip(*[(b, a) if a > b else (a, b) for a, b in zip(self.odd_terms[0], self.odd_terms[1])]))
+        self.odd_terms[0][:] = np.array(list_1)
+        self.odd_terms[1][:] = np.array(list_2)
+        self.odd_vals = np.array([self.H_vals[type]  for type in self.odd_terms[3]], dtype=complex)
+
+        ## Gather Even Hamiltonian
+        self.even_terms = self.act_H_on_subspace(self.even_states,self.even_states_hash)
+        list_1, list_2 = zip(*[(b, a) if a > b else (a, b) for a, b in zip(self.even_terms[0], self.even_terms[1])])
+        self.even_terms[0][:] = np.array(list_1)
+        self.even_terms[1][:] = np.array(list_2)
+        self.even_vals =  np.array([self.H_vals[type] for type in self.even_terms[3]], dtype=complex)
+
+    def block_diagonalize(self, print_result: bool = False, graph: bool = True):
+        '''
+        Once hamiltonian has been generated, block diagonalizing is done by
+        obtaining connected graphs from the row/col lists and reordering the basis states
+        The new hamiltonian is obtained and optionally visualized
+
+        Args:
+            print_resu
+        '''
+        states_block_basis,idx_components, block_components = [],[],[]
+        if graph:
+            title = ['Even','Odd']
+            color = ['lightcoral','royalblue']
+        i=0
+        for pos_data,vals,states_hash,states in zip([self.even_terms, self.odd_terms], [self.even_vals, self.odd_vals],[self.even_states_hash, self.odd_states_hash],[self.even_states,self.odd_states]):
+            reverse_hash = []
+            for key, val in states_hash.items():
+                reverse_hash.append(key)
+
+            rows =pos_data[0]
+            cols = pos_data[1]
+            filt_zero = np.where(vals != 0)
+            rows = rows[filt_zero]
+            cols = cols[filt_zero]
+            vals = vals[filt_zero]
+            
+            # Create a graph from the non-zero row and column data
+            G = nx.Graph()
+            G.add_edges_from(zip(list(rows), list(cols)))
+            components = list(nx.connected_components(G))
+            block_components.append([np.array([reverse_hash[i] for i in list(block)])for block in components])
+
+            # From the graph components, reorder the basis
+            new_states_order = []
+            for j in range(len(components)):
+                new_states_order.extend(list(components[j]))
+            states_block_basis.append([reverse_hash[i] for i in new_states_order])
+            if graph:
+                fig,axs = plt.subplots(ncols = len(components), figsize=(3.5*len(components), 2.5))
+                
+                fig.suptitle(f'{title[i]} sectors')
+                for idx,comp in enumerate(components):
+                    if len(components)>1:
+                        ax = axs[idx]
+                    else:
+                        ax=axs
+                    subgraph=G.subgraph(comp)
+                    subgraph = subgraph.copy()  # Make a copy to avoid modifying original
+                    subgraph.remove_edges_from(nx.selfloop_edges(subgraph))  # Remove self-loops
+                    pos = nx.spring_layout(G)  # Position nodes using a force-directed layout
+                    labels = {i: self.vis_state(reverse_hash[i])[1:-1] for i in list(subgraph)}
+                    nx.draw(subgraph,pos,ax=ax, with_labels=True,labels=labels, node_color=color[i], edge_color='black', node_size=500, font_size=8,font_family="DejaVu Sans")
+            i+=1
+        self.even_states = np.array(states_block_basis[0])
+        self.even_states_hash = {num:idx for idx,num in enumerate(self.even_states)}
+
+        self.odd_states = np.array(states_block_basis[1])
+        self.odd_states_hash = {num:idx for idx,num in enumerate(self.odd_states)}
+
+        self.fock_states= np.append(self.even_states,self.odd_states)
+        self.gather_H()
+        self.H_to_array('odd')
+        self.H_to_array('even')
+
+        if print_result:
+            print(f"Obtained {len(block_components[0])} Even blocks")
+            for idx, block_states in enumerate(block_components[0]):
+                display(Markdown(f'{idx+1}: {self.vis_state_list(block_states)}'))
+                
+            print(f"Obtained {len(block_components[1])} Odd blocks")
+            for idx, block_states in enumerate(block_components[1]):
+                display(Markdown(f'{idx+1}: {self.vis_state_list(block_states)}'))
+
+            fig, axs = plt.subplots(ncols=2, figsize = (6,3))
+            axs[0].matshow(np.abs(self.H_even))
+            axs[0].set_title("Even sector")
+            axs[1].matshow(np.abs(self.H_odd))
+            axs[1].set_title("Odd sector")
+
+        return block_components
 
     def H_to_array(self, parity):
         '''
@@ -552,64 +638,17 @@ class ParitySystem(FermionSystem):
         
         arr = np.zeros((len(states),len(states)),dtype=complex)
         idx=0
-        for row,col,par in zip(pos_data[0],pos_data[1],pos_data[2]):
-            arr[row,col] += par*val_data[idx]
-            arr[col,row] += np.conj(par*val_data[idx])
-            idx+=1
+        rows = np.append(pos_data[0],pos_data[1])
+        cols = np.append(pos_data[1],pos_data[0])
+        pars = np.append(val_data*pos_data[2], np.conj(val_data)*pos_data[2])
+
+        np.add.at(arr, (rows,cols), pars)
+        #np.add.at(arr, (cols,rows), np.conj(pars*val_data))
 
         if parity == 'odd':
             self.H_odd = arr
         else:
             self.H_even = arr
-
-    def update_H_param(self, type: str, new_val: float, update_matrix=False):
-        '''
-        Change the value of the hamiltonian parameter
-        Args:
-            type (str): 'readable' variable name
-            new_val (float): the new value to set
-            update_matrix (bool): if True, also updates the array forms
-                                (requires that the arrays have been generated)
-        Returns:
-            None
-        '''
-        ## Diagonal H terms are counted twice, store only halve the value
-        ## Note: this is the only non-general part of this Class as it assumes
-        ## things about the variable names. 
-        ## would be better to get the factor of 1/2 generally for diagonal terms
-        ## but checking for diagonality will add some time
-        if type[0] == 'm' or type[0] == 'U':
-            new_val = new_val/2
-            
-        ## Grab 'non-verbose' parameter name
-        type_key = self.H_types[type] 
-
-        ## Grab the parameters old value
-        old_val = self.H_vals[type_key]
-
-        ## Store the new value
-        self.H_vals[type_key] = new_val 
-
-        if update_matrix:
-            Hs = [self.H_even, self.H_odd]
-        
-        ## Update the lists tracking the non-zero terms for the even and odd sectors
-        i=0
-        for terms, values in zip([self.even_terms, self.odd_terms], [self.even_vals, self.odd_vals]):
-            type_match = (terms[3] == type_key)
-            replace_value_indices = np.where(type_match)[0]
-            signs = terms[2][replace_value_indices]
-            values[replace_value_indices] = signs*new_val 
-            
-            ## If required, update the matrix forms
-            if update_matrix:
-                H=Hs[i]
-                for r,c,p in zip(terms[0][type_match],terms[1][type_match],terms[2][type_match]):
-                    H[r,c] -= old_val*p
-                    H[r,c] += new_val*p
-                    H[c,r] -= np.conj(old_val*p)
-                    H[c,r] += np.conj(new_val*p)
-            i+=1
 
     def update_H_param_list(self, types: list[str], new_val: float, update_matrix=False):
         '''
@@ -651,17 +690,15 @@ class ParitySystem(FermionSystem):
             replace_value_indices = np.where(type_match)[0]
             signs = terms[2][replace_value_indices]
             values[replace_value_indices] = signs*new_val 
-            
             ## If required, update the matrix forms
-            ## TO DO: should be possible to avoid the for-loop here, but did not manage
-            ## to get it to work 
             if update_matrix:
-                H=Hs[i]
-                for r,c,p in zip(terms[0][type_match],terms[1][type_match],terms[2][type_match]):
-                    H[r,c] -= old_val*p
-                    H[r,c] += new_val*p
-                    H[c,r] -= np.conj(old_val*p)
-                    H[c,r] += np.conj(new_val*p)
+                rows = terms[0][type_match]
+                cols = terms[1][type_match]
+                pars = terms[2][type_match]
+                np.add.at(Hs[i],(np.append(rows,cols),np.append(cols,rows)), np.append(-old_val*pars + new_val*pars,-np.conj(old_val*pars) + np.conj(new_val*pars) ))
+                #np.add.at(Hs[i],(rows,cols), new_val*pars)
+                #np.add.at(Hs[i], (cols,rows), -np.conj(old_val*pars) + np.conj(new_val*pars))
+                #np.add.at(Hs[i], (cols,rows), np.conj(new_val*pars))
             i+=1
 
     def solve_system(self, method='linalg', n_values=None,):

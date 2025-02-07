@@ -134,7 +134,6 @@ def make_kitaev_chain(N,H_params, Ez_inf = True, U_inf = True, make_arrays=False
     generate_kit = partial(make_kitaev_hamiltonian,fs)
     generate_map = partial(map_H_params_kitaev,fs,H_params)
     chain = fst.ParitySystem(N = N, H_generator=generate_kit,H_mapping = generate_map,sparse_function=sparse_function, Ez_inf = Ez_inf, U_inf=U_inf)
-    chain.gather_H()
     if make_arrays:
         chain.H_to_array('odd')
         chain.H_to_array('even')
@@ -177,8 +176,6 @@ def energy_spectrum(chain, params, param_range, sites, fig, axs, plot=True):
         return all_xvars,all_energies,all_weights
 
 def plot_energy_spectrum(fix, ax,mu, energies,weights, xval,site):
-    weights = np.abs(weights)
-    weights = np.minimum(weights, 1)
     ax.scatter(mu,energies, alpha=  np.abs(weights) , s=3, color = 'black')
     ax.set_title(f'Spectum site {site}')
 
@@ -198,8 +195,8 @@ def conductance_spectrum(chain, params, param_range,bias_range, sites = [0,1], l
         ## Create Figure
         fig, axs = plt.subplots(ncols = len(sites), figsize = (len(sites)*2.5,2))
         for ax in axs:
-            ax.set_xlabel('$\\delta \\mu$') 
-            ax.set_ylabel('$V_{\\mathrm{bias}}$')
+            ax.set_xlabel('$\delta \mu$') 
+            ax.set_ylabel('$V_{\mathrm{bias}}$')
         for i in range(n_sites):
             im = axs[i].pcolormesh(param_range,bias_range,np.transpose(Gs[i][i]),cmap='Reds')
             cbar = fig.colorbar(im,ax = axs[i])
